@@ -58,7 +58,7 @@ endif
 # Mach-O prefixes every C symbol with an underscore; ELF does not.
 SYM_PREFIX := $(if $(filter Darwin,$(shell uname -s)),_,)
 
-.PHONY: test asan seams clean
+.PHONY: test asan seams fuzz fuzz-build clean
 
 SPAKE_SRC := backends/mbedtls/tm_spake2p_mbedtls.c
 SPAKE_CFLAGS := $(CSTD) $(WARN) $(GCC_PARITY) $(SPAKE_RENAME) $(INCS) -I$(MBEDTLS_PREFIX)/include
@@ -113,6 +113,36 @@ seams:
 	echo "libc, not a seam: $$(grep -E '$(LIBC_RE)' $(BUILD)/seams/all.txt | tr '\n' ' ')"; \
 	diff -u tests/seams.expected $(BUILD)/seams/seams.txt && \
 	echo "make seams: $$(wc -l < $(BUILD)/seams/seams.txt | tr -d ' ') symbols, matches tests/seams.expected"
+
+# libFuzzer targets in tests/host/fuzz. Apple clang ships no libFuzzer, so the
+# default compiler is Homebrew LLVM's. FUZZ_LDFLAGS is for a machine whose
+# default linker is not the platform one, e.g. FUZZ_LDFLAGS="--ld-path=<ld>".
+# make fuzz runs each target for FUZZ_TIME seconds from its seeds, keeping the
+# corpus and any crash under build/fuzz.
+FUZZ_CC ?= $(shell brew --prefix llvm 2>/dev/null)/bin/clang
+FUZZ_LDFLAGS ?=
+FUZZ_TIME ?= 600
+FUZZ_TARGETS := tlv msg btp im pase_case
+FUZZ_BINS := $(addprefix build/fuzz/fuzz_,$(FUZZ_TARGETS))
+# The host stubs stand in for the crypto and Thread seams, so every target
+# links the whole core and only exercises the parser it names.
+FUZZ_SUPPORT := tests/host/test_matter_attest_stub.c tests/host/test_matter_case_stub.c \
+	tests/host/test_matter_thread_stub.c tests/host/aes_ref.c tests/host/spakefake/spakefake.c
+
+build/fuzz/fuzz_%: tests/host/fuzz/fuzz_%.c $(CORE_SRCS) $(FUZZ_SUPPORT) $(HDRS)
+	@mkdir -p $(@D)
+	$(FUZZ_CC) -std=c11 -g -O1 $(WARN) -fsanitize=fuzzer,address,undefined $(TEST_DEFS) $(TEST_INCS) \
+		$(FUZZ_LDFLAGS) $< $(CORE_SRCS) $(FUZZ_SUPPORT) -o $@
+
+fuzz-build: $(FUZZ_BINS)
+
+fuzz: $(FUZZ_BINS)
+	@for t in $(FUZZ_TARGETS); do \
+		mkdir -p build/fuzz/corpus/$$t build/fuzz/crash/$$t && \
+		build/fuzz/fuzz_$$t -max_total_time=$(FUZZ_TIME) -print_final_stats=1 \
+			-artifact_prefix=build/fuzz/crash/$$t/ build/fuzz/corpus/$$t \
+			tests/host/fuzz/seeds/$$t || exit 1; \
+	done
 
 clean:
 	rm -rf build
