@@ -1,0 +1,4 @@
+name: tinymatter
+build:
+  cmake: .
+  kconfig: Kconfig

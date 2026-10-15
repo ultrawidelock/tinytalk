@@ -5,6 +5,8 @@
 #   make test CC=/usr/bin/clang NM="xcrun nm"
 
 NM ?= nm
+# Byte order for every sort and comm below, whatever the caller's locale.
+export LC_ALL := C
 BUILD := build/host
 
 CSTD := -std=c11 -O1
@@ -37,20 +39,28 @@ asan:
 	$(BUILD)/host_test_asan
 
 # The symbols the core leaves for a backend or a port to provide: everything a
-# core object references that no core object defines. Must match
+# matter_*.c object references that none of them defines. tm_hash.c is left
+# out on purpose, so the hash shows up as the seam it is. libc is printed but
+# is not a seam: which libc names appear is the compiler's choice (bzero for a
+# zeroing memset, __stack_chk_* for the stack protector). The rest must match
 # tests/seams.expected, which PORTING.md's seam table describes.
+SEAM_SRCS := $(wildcard src/matter_*.c)
+LIBC_RE := ^_*((mem[a-z]*|str[a-z]*|bzero|snprintf)(_chk)?|stack_chk_(fail|guard))$$
+
 seams:
-	@mkdir -p $(BUILD)/seams && rm -f $(BUILD)/seams/*.o
-	@for f in $(CORE_SRCS); do \
+	@mkdir -p $(BUILD)/seams
+	@for f in $(SEAM_SRCS); do \
 		$(CC) $(CSTD) $(WARN) $(GCC_PARITY) $(INCS) -c $$f -o $(BUILD)/seams/$$(basename $$f .c).o || exit 1; \
 	done
-	@objs="$(patsubst src/%.c,$(BUILD)/seams/%.o,$(CORE_SRCS))"; \
+	@objs="$(patsubst src/%.c,$(BUILD)/seams/%.o,$(SEAM_SRCS))"; \
 	if [ -n "$$objs" ]; then \
 		$(NM) -A -u $$objs | awk '{ print $$NF }' | sed 's/^$(SYM_PREFIX)//' | sort -u > $(BUILD)/seams/undef.txt; \
 		$(NM) -A -g --defined-only $$objs | awk '{ print $$NF }' | sed 's/^$(SYM_PREFIX)//' | sort -u > $(BUILD)/seams/def.txt; \
 	else : > $(BUILD)/seams/undef.txt; : > $(BUILD)/seams/def.txt; fi; \
-	comm -23 $(BUILD)/seams/undef.txt $(BUILD)/seams/def.txt > $(BUILD)/seams/seams.txt; \
+	comm -23 $(BUILD)/seams/undef.txt $(BUILD)/seams/def.txt > $(BUILD)/seams/all.txt; \
+	grep -E -v '$(LIBC_RE)' $(BUILD)/seams/all.txt > $(BUILD)/seams/seams.txt || true; \
 	cat $(BUILD)/seams/seams.txt; \
+	echo "libc, not a seam: $$(grep -E '$(LIBC_RE)' $(BUILD)/seams/all.txt | tr '\n' ' ')"; \
 	diff -u tests/seams.expected $(BUILD)/seams/seams.txt && \
 	echo "make seams: $$(wc -l < $(BUILD)/seams/seams.txt | tr -d ' ') symbols, matches tests/seams.expected"
 
