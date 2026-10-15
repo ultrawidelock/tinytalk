@@ -3,11 +3,10 @@
 /*
  * See matter_clusters.h.
  *
- * status() and value() dispatch over the same paths and are kept as two
- * switches rather than one table of function pointers. A table would cost a
- * relocation and an indirect call per attribute on a part where flash is the
- * binding constraint, and the duplication is a case label -- the compiler
- * checks neither way, but a missing case here reads as a missing case.
+ * status() answers from the attribute lists a wildcard expands, so the two
+ * agree by construction. value() is a switch rather than a table of function
+ * pointers: a table would cost a relocation and an indirect call per
+ * attribute on a part where flash is the binding constraint.
  */
 #include <tinymatter/matter_clusters.h>
 #include <tinymatter/tm_platform.h>
@@ -707,145 +706,35 @@ static size_t list_endpoints(void *ctx, const uint16_t **out)
  * not exist, MATTER_IM_STATUS_UNSUPPORTED_CLUSTER if the cluster does not exist on that endpoint,
  * or MATTER_IM_STATUS_UNSUPPORTED_ATTRIBUTE if the attribute does not exist on that cluster.
  */
+static size_t list_attrs(void *ctx, uint16_t endpoint, uint32_t cluster, const uint32_t **out);
+
 static uint8_t attr_status(void *ctx, uint16_t endpoint, uint32_t cluster, uint32_t attribute)
 {
-	(void)ctx;
+	const uint32_t *ids = NULL;
+	size_t n;
 
 	/*
 	 * Endpoint, then cluster, then attribute. The ORDER is the answer:
 	 * MetadataLookup.cpp:68-88 reports the outermost thing that is missing,
 	 * so a bad endpoint must not be reported as a bad attribute.
 	 */
-	if (endpoint != MATTER_ENDPOINT_ROOT) {
-		const struct tm_endpoint *ep = app_endpoint(endpoint, NULL);
-		const struct tm_cluster *c;
-
-		if (ep == NULL) {
-			return MATTER_IM_STATUS_UNSUPPORTED_ENDPOINT;
-		}
-		if (cluster == MATTER_CLUSTER_DESCRIPTOR) {
-			switch (attribute) {
-			case MATTER_ATTR_DESC_DEVICE_TYPE_LIST:
-			case MATTER_ATTR_DESC_SERVER_LIST:
-			case MATTER_ATTR_DESC_CLIENT_LIST:
-			case MATTER_ATTR_DESC_PARTS_LIST:
-				return MATTER_IM_STATUS_SUCCESS;
-			default:
-				return MATTER_IM_STATUS_UNSUPPORTED_ATTRIBUTE;
-			}
-		}
-		c = app_cluster(ep, cluster);
-		if (c == NULL) {
-			return MATTER_IM_STATUS_UNSUPPORTED_CLUSTER;
-		}
-		/*
-		 * Its attrs ARE AttributeList, the globals included: the CHIP
-		 * builds answer those on every cluster, and Apple Home's optional
-		 * lock controls (auto-lock timing, access management) appear on
-		 * those builds and not on one without them.
-		 */
-		return id_listed(c->attrs, c->n_attrs, attribute)
-			       ? MATTER_IM_STATUS_SUCCESS
-			       : MATTER_IM_STATUS_UNSUPPORTED_ATTRIBUTE;
+	if (endpoint != MATTER_ENDPOINT_ROOT && app_endpoint(endpoint, NULL) == NULL) {
+		return MATTER_IM_STATUS_UNSUPPORTED_ENDPOINT;
 	}
-
-	switch (cluster) {
-	case MATTER_CLUSTER_BASIC_INFORMATION:
-		switch (attribute) {
-		case MATTER_ATTR_BASIC_DATA_MODEL_REVISION:
-		case MATTER_ATTR_BASIC_VENDOR_NAME:
-		case MATTER_ATTR_BASIC_VENDOR_ID:
-		case MATTER_ATTR_BASIC_PRODUCT_NAME:
-		case MATTER_ATTR_BASIC_PRODUCT_ID:
-		case MATTER_ATTR_BASIC_NODE_LABEL:
-		case MATTER_ATTR_BASIC_LOCATION:
-		case MATTER_ATTR_BASIC_HARDWARE_VERSION:
-		case MATTER_ATTR_BASIC_HARDWARE_VERSION_STR:
-		case MATTER_ATTR_BASIC_SOFTWARE_VERSION:
-		case MATTER_ATTR_BASIC_SOFTWARE_VERSION_STR:
-		case MATTER_ATTR_BASIC_SERIAL_NUMBER:
-		case MATTER_ATTR_BASIC_UNIQUE_ID:
-		case MATTER_ATTR_BASIC_CAPABILITY_MINIMA:
-		case MATTER_ATTR_BASIC_SPECIFICATION_VERSION:
-		case MATTER_ATTR_BASIC_MAX_PATHS_PER_INVOKE:
-			return MATTER_IM_STATUS_SUCCESS;
-		default:
-			return MATTER_IM_STATUS_UNSUPPORTED_ATTRIBUTE;
-		}
-	case MATTER_CLUSTER_NETWORK_COMMISSIONING:
-		switch (attribute) {
-		case MATTER_ATTR_NC_MAX_NETWORKS:
-		case MATTER_ATTR_NC_NETWORKS:
-		case MATTER_ATTR_NC_SCAN_MAX_TIME_S:
-		case MATTER_ATTR_NC_CONNECT_MAX_TIME_S:
-		case MATTER_ATTR_NC_INTERFACE_ENABLED:
-		case MATTER_ATTR_NC_LAST_NETWORKING_STATUS:
-		case MATTER_ATTR_FEATURE_MAP:
-			return MATTER_IM_STATUS_SUCCESS;
-		default:
-			return MATTER_IM_STATUS_UNSUPPORTED_ATTRIBUTE;
-		}
-	case MATTER_CLUSTER_DESCRIPTOR:
-		switch (attribute) {
-		case MATTER_ATTR_DESC_DEVICE_TYPE_LIST:
-		case MATTER_ATTR_DESC_SERVER_LIST:
-		case MATTER_ATTR_DESC_CLIENT_LIST:
-		case MATTER_ATTR_DESC_PARTS_LIST:
-			return MATTER_IM_STATUS_SUCCESS;
-		default:
-			return MATTER_IM_STATUS_UNSUPPORTED_ATTRIBUTE;
-		}
-	case MATTER_CLUSTER_ACCESS_CONTROL:
-		switch (attribute) {
-		case MATTER_ATTR_AC_ACL:
-		case MATTER_ATTR_AC_SUBJECTS_PER_ENTRY:
-		case MATTER_ATTR_AC_TARGETS_PER_ENTRY:
-		case MATTER_ATTR_AC_ENTRIES_PER_FABRIC:
-			return MATTER_IM_STATUS_SUCCESS;
-		default:
-			return MATTER_IM_STATUS_UNSUPPORTED_ATTRIBUTE;
-		}
-	case MATTER_CLUSTER_ADMIN_COMMISSIONING:
-		switch (attribute) {
-		case MATTER_ATTR_ADMIN_WINDOW_STATUS:
-		case MATTER_ATTR_ADMIN_FABRIC_INDEX:
-		case MATTER_ATTR_ADMIN_VENDOR_ID:
-			return MATTER_IM_STATUS_SUCCESS;
-		default:
-			return MATTER_IM_STATUS_UNSUPPORTED_ATTRIBUTE;
-		}
-	case MATTER_CLUSTER_OPERATIONAL_CREDENTIALS:
-		switch (attribute) {
-		case MATTER_ATTR_OC_NOCS:
-		case MATTER_ATTR_OC_FABRICS:
-		case MATTER_ATTR_OC_SUPPORTED_FABRICS:
-		case MATTER_ATTR_OC_COMMISSIONED_FABRICS:
-		case MATTER_ATTR_OC_TRUSTED_ROOTS:
-		case MATTER_ATTR_OC_CURRENT_FABRIC_INDEX:
-			return MATTER_IM_STATUS_SUCCESS;
-		default:
-			return MATTER_IM_STATUS_UNSUPPORTED_ATTRIBUTE;
-		}
-	case MATTER_CLUSTER_GENERAL_COMMISSIONING:
-		switch (attribute) {
-		case MATTER_ATTR_GC_BREADCRUMB:
-		case MATTER_ATTR_GC_BASIC_COMMISSIONING_INFO:
-		case MATTER_ATTR_GC_REGULATORY_CONFIG:
-		case MATTER_ATTR_GC_LOCATION_CAPABILITY:
-		case MATTER_ATTR_GC_SUPPORTS_CONCURRENT_CONNECTION:
-			return MATTER_IM_STATUS_SUCCESS;
-		default:
-			/*
-			 * IsCommissioningWithoutPower (0x000C) lands here, and a
-			 * real iPhone does ask for it. Saying UNSUPPORTED
-			 * ATTRIBUTE is the correct answer for a node that does
-			 * not implement it, and the commissioner carries on.
-			 */
-			return MATTER_IM_STATUS_UNSUPPORTED_ATTRIBUTE;
-		}
-	default:
+	if (!has_cluster(ctx, endpoint, cluster)) {
 		return MATTER_IM_STATUS_UNSUPPORTED_CLUSTER;
 	}
+	/*
+	 * The same list a wildcard expands, so the two cannot disagree. For an
+	 * application cluster it is also AttributeList, the globals included.
+	 * IsCommissioningWithoutPower (GeneralCommissioning 0x000C) is not on
+	 * its list, and a real iPhone does ask for it: UNSUPPORTED_ATTRIBUTE is
+	 * the correct answer for a node that does not implement it, and the
+	 * commissioner carries on.
+	 */
+	n = list_attrs(ctx, endpoint, cluster, &ids);
+	return id_listed(ids, n, attribute) ? MATTER_IM_STATUS_SUCCESS
+					    : MATTER_IM_STATUS_UNSUPPORTED_ATTRIBUTE;
 }
 
 /** An array attribute whose members are bare unsigned ids; NULL/0 is legal
@@ -1412,10 +1301,10 @@ static void attr_value(void *ctx, uint16_t endpoint, uint32_t cluster, uint32_t 
 }
 
 /*
- * Attribute lists for expanding a wildcard read. These are exactly the
- * attributes attr_status() answers SUCCESS for, and the two must agree: an id
- * here that attr_status() refuses turns a wildcard into a report full of
- * UNSUPPORTED_ATTRIBUTE, which is worse than the silence it replaced.
+ * Attribute lists for expanding a wildcard read, and what attr_status() answers
+ * SUCCESS for: one list, because an id a wildcard named and attr_status()
+ * refused would turn a report into a list of UNSUPPORTED_ATTRIBUTE, which is
+ * worse than the silence it replaced.
  *
  * The global attributes (FeatureMap 0xFFFC, ClusterRevision 0xFFFD and the
  * rest) are deliberately absent. Nothing has asked for them, and a wildcard
