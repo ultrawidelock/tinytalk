@@ -1,17 +1,18 @@
-# The Zephyr port: tm_platform.h on the kernel, the 0xFFF6 BLE commissioning
-# transport (matter_ble.h), storage on Zephyr settings (tm_kv.h), and Thread
-# on OpenThread (matter_thread.h).
+# The Zephyr port: tm_platform.h on the kernel and storage on Zephyr settings
+# (tm_kv.h), always; the 0xFFF6 BLE commissioning transport (matter_ble.h) with
+# CONFIG_TINYMATTER_BLE, and Thread on OpenThread (matter_thread.h) with
+# CONFIG_TINYMATTER_THREAD.
 #
 # matter_ble_zephyr.h is on the include path of every target, because the
 # application calls it for the advert.
 
 zephyr_include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
-if(CONFIG_TINYMATTER_BLE)
-  zephyr_library_named(tinymatter_zephyr)
-  zephyr_library_sources(
-    ${CMAKE_CURRENT_SOURCE_DIR}/tm_platform_zephyr.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/matter_ble_zephyr.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/tm_kv_zephyr.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/thread/matter_thread_port.c)
-endif()
+zephyr_library_named(tinymatter_zephyr)
+zephyr_library_sources(
+  ${CMAKE_CURRENT_SOURCE_DIR}/tm_platform_zephyr.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/tm_kv_zephyr.c)
+# Each transport is optional; without one the application provides its seam.
+zephyr_library_sources_ifdef(CONFIG_TINYMATTER_BLE ${CMAKE_CURRENT_SOURCE_DIR}/matter_ble_zephyr.c)
+zephyr_library_sources_ifdef(CONFIG_TINYMATTER_THREAD
+  ${CMAKE_CURRENT_SOURCE_DIR}/thread/matter_thread_port.c)

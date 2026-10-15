@@ -9,7 +9,7 @@
 
 #include <zephyr/logging/log.h>
 
-LOG_MODULE_DECLARE(matter_ble, CONFIG_TINYMATTER_BLE_LOG_LEVEL);
+LOG_MODULE_DECLARE(tinymatter, CONFIG_TINYMATTER_LOG_LEVEL);
 
 #define TM_LOG_ERR(...) LOG_ERR(__VA_ARGS__)
 #define TM_LOG_WRN(...) LOG_WRN(__VA_ARGS__)

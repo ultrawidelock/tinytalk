@@ -3,6 +3,8 @@
 
 config TINYMATTER
 	bool "Hand-written minimal Matter node"
+	# tm_device_id(), which seeds the serial number.
+	select HWINFO
 	help
 	  Compile the from-scratch Matter protocol code: TLV codec, message and
 	  exchange layers, MRP, and the small cluster surface Apple Home
@@ -43,27 +45,34 @@ config TINYMATTER_DOOR_LOCK
 
 # ---- the Zephyr port (ports/zephyr) ------------------------------------------
 
+if TINYMATTER
+
+module = TINYMATTER
+module-str = tinymatter
+source "subsys/logging/Kconfig.template.log_config"
+
 config TINYMATTER_BLE
-	bool "Matter node: BLE commissioning (0xFFF6 over BTP) and Thread"
+	bool "BLE commissioning: the 0xFFF6 service over BTP"
 	# The framing itself is in the core (src/) and has no Zephyr
 	# dependency; this brings in the Zephyr-side adapter that carries it.
-	depends on BT_PERIPHERAL && OPENTHREAD
-	select TINYMATTER
-	# tm_device_id(), which seeds the serial number.
-	select HWINFO
-	default n
+	depends on BT_PERIPHERAL
 	help
-	  Compile the 0xFFF6 service (C1 write, C2 indicate), the BTP glue
-	  that turns it into a Matter message transport, and the Thread
-	  transport: the node joins the Thread network a commissioner hands it,
-	  registers its operational service over SRP and carries Matter over
-	  UDP on port 5540.
+	  Compile the 0xFFF6 service (C1 write, C2 indicate) and the BTP glue
+	  that turns it into a Matter message transport (matter_ble.h).
+	  Without it the application provides matter_ble.h itself.
 
 	  This does not start advertising. The application owns the single
 	  advertising set and asks this transport for the commissionable payload
 	  while the node has no fabric -- see TINYMATTER_DISCRIMINATOR.
 
-if TINYMATTER_BLE
+config TINYMATTER_THREAD
+	bool "Matter over Thread: OpenThread, SRP and UDP 5540"
+	depends on OPENTHREAD
+	help
+	  Compile the Thread transport (matter_thread.h): the node joins the
+	  Thread network a commissioner hands it, registers its operational
+	  service over SRP and carries Matter over UDP on port 5540. Without
+	  it the application provides matter_thread.h itself.
 
 config TINYMATTER_DISCRIMINATOR
 	hex "Matter setup discriminator, 12-bit"
@@ -136,6 +145,8 @@ config TINYMATTER_SPAKE2P_ITERATIONS
 	  device: the verifier is derived off-device, so a high count is paid by
 	  the phone once per pairing, in milliseconds.
 
+if TINYMATTER_BLE
+
 config TINYMATTER_BLE_RX_BUF
 	int "Inbound Matter message ceiling, bytes"
 	default 1024
@@ -168,10 +179,14 @@ module = TINYMATTER_BLE
 module-str = matter_ble
 source "subsys/logging/Kconfig.template.log_config"
 
-# Thread logs separately from matter_ble: matter_thread_port.c narrates SRP
-# registration; matter_ble carries commissioning and fabric handling.
+endif # TINYMATTER_BLE
+
+# Thread logs separately: matter_thread_port.c narrates SRP registration; the
+# node's own log carries commissioning and fabric handling.
+if TINYMATTER_THREAD
 module = TINYMATTER_THREAD
 module-str = matter_thread
 source "subsys/logging/Kconfig.template.log_config"
+endif # TINYMATTER_THREAD
 
-endif # TINYMATTER_BLE
+endif # TINYMATTER

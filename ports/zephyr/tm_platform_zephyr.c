@@ -11,9 +11,14 @@
 #include <zephyr/drivers/hwinfo.h>
 #include <zephyr/init.h>
 #include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
 
 #include <errno.h>
 #include <string.h>
+
+/* The node's own log (tm_log_zephyr.h); it is registered here, in the one
+ * port file every build has. */
+LOG_MODULE_REGISTER(tinymatter, CONFIG_TINYMATTER_LOG_LEVEL);
 
 static K_MUTEX_DEFINE(s_lock);
 

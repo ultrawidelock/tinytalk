@@ -109,6 +109,34 @@ holding it for 5 s erases the fabrics and reboots. On the DWM3001CDK, `led0`
 is D9 (green) and `sw0` is SW2. SW1 is the hardware reset: it reboots and
 erases nothing.
 
+## Using it in a Zephyr application
+
+Add the repository as a Zephyr module, in the application's `west.yml`:
+
+```yaml
+manifest:
+  projects:
+    - name: tinymatter
+      url: <tinymatter-repo-url>
+      revision: <commit>
+      path: modules/lib/tinymatter
+```
+
+or with `list(APPEND ZEPHYR_EXTRA_MODULES <path-to-tinymatter>)` before
+`find_package(Zephyr)`, as `samples/door-lock/CMakeLists.txt` does. Then pick
+what to build:
+
+| Option | What it adds |
+|---|---|
+| `CONFIG_TINYMATTER` | the node, the platform port and storage on settings |
+| `CONFIG_TINYMATTER_BLE` | BLE commissioning (0xFFF6, BTP); without it the application provides `matter_ble.h` |
+| `CONFIG_TINYMATTER_THREAD` | Matter over Thread (OpenThread, SRP, UDP 5540); without it the application provides `matter_thread.h` |
+| `CONFIG_TINYMATTER_DOOR_LOCK` | the Door Lock cluster module |
+| `CONFIG_TINYMATTER_SPAKE2P_OBERON` or `_MBEDTLS` | the SPAKE2+ backend |
+
+Pass the application's endpoint table to `matter_commission_init()`; PORTING.md
+("Adding a cluster") covers writing a cluster.
+
 ## Sizes
 
 Measured 2026-10-16 from the linker's memory-region report, building
