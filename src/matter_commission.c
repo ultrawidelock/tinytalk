@@ -1,11 +1,14 @@
 /* SPDX-License-Identifier: ISC */
 
 /**
- * @file matter_commission.c — joins BTP, the exchange and PASE.
+ * @file matter_commission.c: the node, which joins BTP, the exchange, PASE, CASE
+ * and the Interaction Model.
  *
- * Three finished pieces and no protocol of its own:
+ * Portable: everything it needs from the platform is in tm_platform.h,
+ * tm_kv.h, matter_ble.h and matter_thread.h. Three finished pieces and no
+ * protocol of its own:
  *
- *   matter_ble_zephyr.c   bytes in and out over the 0xFFF6 service
+ *   matter_ble.h          bytes in and out over the 0xFFF6 service
  *   matter_exchange.c     which session, which exchange, duplicate, ack
  *   matter_pase_sm.c      the five commissioning messages
  *
@@ -13,42 +16,40 @@
  * SPAKE2+ verifier out of configuration, drawing real randomness, and deciding
  * what happens when a commissioner disappears halfway through.
  *
- * The Kconfig default verifier is the source project's own, generated for one
- * passcode. A real deployment generates its own; see the help for
- * CONFIG_TINYMATTER_SPAKE2P_VERIFIER.
+ * The verifier arrives in struct matter_commission_config. The sample's default
+ * is one passcode for every board; a real deployment generates its own with
+ * scripts/spake2p_verifier.py.
  *
  * Carried from the source project, cut to the generic node: its presence
  * sensing, credential reader, firmware update, LED and self-test code is gone,
  * and the application supplies the two things only it knows about, the
  * advertising set and the bolt (see matter_commission.h).
  */
-#include <zephyr/kernel.h>
-#include <zephyr/logging/log.h>
-#include <zephyr/settings/settings.h>
-#include <zephyr/sys/atomic.h>
-
-#include <ctype.h>
 #include <errno.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
 
-/* Randomness, and the public half of the operational key. */
-#include <psa/crypto.h>
-
 #include <tinymatter/tm_hash.h> /* tm_sha256, for the CASE transcript */
-#include "matter_ble_zephyr.h"
 #include <tinymatter/matter_attest.h>
+#include <tinymatter/matter_ble.h>
 #include <tinymatter/matter_case.h>
 #include <tinymatter/matter_clusters.h>
-#include "matter_commission.h"
+#include <tinymatter/matter_commission.h>
 #include <tinymatter/matter_exchange.h>
-#include "matter_fab_settings.h" /* the fabric table, across a reboot */
+#include <tinymatter/matter_fab_store.h> /* the fabric table, across a reboot */
 #include <tinymatter/matter_im.h>
 #include <tinymatter/matter_msg.h>
 #include <tinymatter/matter_pase_sm.h>
 #include <tinymatter/matter_thread.h>
+#include <tinymatter/tm_kv.h>
+#include <tinymatter/tm_log.h>
+#include <tinymatter/tm_platform.h>
 
-LOG_MODULE_DECLARE(matter_ble, CONFIG_TINYMATTER_BLE_LOG_LEVEL);
+#define TM_MIN(a, b) ((a) < (b) ? (a) : (b))
+
+/* What the application passed to matter_commission_init(). */
+static const struct matter_commission_config *s_cfg;
 
 static struct matter_exchange s_exchange;
 static struct matter_pase_responder s_pase;
@@ -89,8 +90,8 @@ static struct matter_device_info s_info;
  */
 static void s_info_defaults(void)
 {
-	s_info.vendor_id = CONFIG_TINYMATTER_VENDOR_ID;
-	s_info.product_id = CONFIG_TINYMATTER_PRODUCT_ID;
+	s_info.vendor_id = s_cfg->vendor_id;
+	s_info.product_id = s_cfg->product_id;
 	s_info.breadcrumb = 0u;
 	s_info.regulatory_config = MATTER_REGULATORY_INDOOR;
 	s_info.location_capability = MATTER_REGULATORY_INDOOR;
@@ -112,8 +113,8 @@ static void s_info_defaults(void)
  * only the two scalar predicates they need instead of exposing s_info or the
  * administrative state to a second lock owner. Static zero is the correct
  * pre-init state: no restored fabric yet and no open window. */
-static atomic_t s_has_fabric_snapshot;
-static atomic_t s_window_open_snapshot;
+static atomic_int s_has_fabric_snapshot;
+static atomic_int s_window_open_snapshot;
 
 static void fabric_snapshot_refresh_owned(void)
 {
@@ -125,7 +126,7 @@ static void fabric_snapshot_refresh_owned(void)
 			break;
 		}
 	}
-	atomic_set(&s_has_fabric_snapshot, present ? 1 : 0);
+	atomic_store(&s_has_fabric_snapshot, present ? 1 : 0);
 }
 static struct matter_im_server s_im;
 
@@ -144,7 +145,7 @@ static uint8_t command_status_logged(void *ctx, const struct matter_im_invoke *i
 	uint8_t st = s_cluster_command(ctx, inv, response_command);
 
 	if (st != MATTER_IM_STATUS_SUCCESS) {
-		LOG_WRN("  -> refused, status 0x%02x (node %08x%08x)", st,
+		TM_LOG_WRN("  -> refused, status 0x%02x (node %08x%08x)", st,
 			(unsigned int)(s_info.accessing_node_id >> 32),
 			(unsigned int)s_info.accessing_node_id);
 	}
@@ -218,15 +219,12 @@ static struct tx_effect s_tx_effects[MATTER_TX_SLOTS];
 static struct tx_thread_owner s_tx_thread_owner[MATTER_TX_SLOTS];
 static uint32_t s_ble_tx_token;
 static uint32_t s_thread_tx_token;
-static struct k_mutex s_owner_lock;
 
 static void tx_effect_finish(struct matter_tx_slot *slot, int status);
 static int tx_ble_pump(void);
 static uint16_t current_session_id(void);
 static void tx_thread_reap_expired(uint32_t now_ms);
 static void tx_thread_reap_schedule_owned(uint32_t now_ms);
-static void tx_thread_reap_work_fn(struct k_work *work);
-static K_WORK_DELAYABLE_DEFINE(s_thread_reap_work, tx_thread_reap_work_fn);
 
 /*
  * The Thread transport's reply buffer is exactly this ceiling, and it is sized
@@ -235,36 +233,13 @@ static K_WORK_DELAYABLE_DEFINE(s_thread_reap_work, tx_thread_reap_work_fn);
  * without moving the buffer would silently reintroduce the framing that
  * send_framed() cannot copy out.
  */
-BUILD_ASSERT(MATTER_THREAD_REPLY_MAX ==
+_Static_assert(MATTER_THREAD_REPLY_MAX ==
 		     MATTER_EXCHANGE_HEADER_MAX + MATTER_IM_PAYLOAD_MAX + MATTER_TAG_LEN,
 	     "the Thread reply buffer must hold exactly one full-size Matter message");
 
-/** The CSPRNG: PSA's, which psa_crypto_init() has seeded. 0 or -EIO. */
-static int tm_random(void *out, size_t len)
+static bool is_hex(char c)
 {
-	return psa_generate_random(out, len) == PSA_SUCCESS ? 0 : -EIO;
-}
-
-/** The public half of a P-256 private scalar, uncompressed. 0 or -EIO. */
-static int ec_p256_pub_from_priv(const uint8_t priv[32], uint8_t pub[65])
-{
-	psa_key_attributes_t attr = PSA_KEY_ATTRIBUTES_INIT;
-	psa_key_id_t k = 0;
-	size_t publen = 0;
-	int rc = -EIO;
-
-	psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_EXPORT);
-	psa_set_key_algorithm(&attr, PSA_ALG_ECDH);
-	psa_set_key_type(&attr, PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_R1));
-	psa_set_key_bits(&attr, 256);
-	if (psa_import_key(&attr, priv, 32u, &k) != PSA_SUCCESS) {
-		return -EIO;
-	}
-	if (psa_export_public_key(k, pub, 65u, &publen) == PSA_SUCCESS && publen == 65u) {
-		rc = 0;
-	}
-	psa_destroy_key(k);
-	return rc;
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
 }
 
 /** @return 0 and the byte count, or -EINVAL on any non-hex or odd-length input. */
@@ -279,7 +254,7 @@ static int unhex(const char *s, uint8_t *out, size_t cap, size_t *len)
 	for (i = 0; i < n; i += 2u) {
 		unsigned int hi, lo;
 
-		if (!isxdigit((int)s[i]) || !isxdigit((int)s[i + 1u])) {
+		if (!is_hex(s[i]) || !is_hex(s[i + 1u])) {
 			return -EINVAL;
 		}
 		hi = (unsigned int)((s[i] > '9') ? ((s[i] | 0x20) - 'a' + 10) : (s[i] - '0'));
@@ -292,7 +267,7 @@ static int unhex(const char *s, uint8_t *out, size_t cap, size_t *len)
 }
 
 /**
- * Read the verifier out of Kconfig.
+ * Read the verifier out of the configuration.
  *
  * A verifier and the parameters that produced it have to agree, and nothing on
  * this device can check that they do -- a mismatched pair fails at Pake3 with
@@ -306,12 +281,12 @@ static int load_verifier(void)
 	size_t blob_len = 0u;
 	size_t salt_len = 0u;
 
-	if (unhex(CONFIG_TINYMATTER_SPAKE2P_VERIFIER, blob, sizeof(blob), &blob_len) != 0) {
-		LOG_ERR("SPAKE2P verifier is not %u bytes of hex", (unsigned int)sizeof(blob));
+	if (unhex(s_cfg->verifier_hex, blob, sizeof(blob), &blob_len) != 0) {
+		TM_LOG_ERR("SPAKE2P verifier is not %u bytes of hex", (unsigned int)sizeof(blob));
 		return -EINVAL;
 	}
 	if (blob_len != sizeof(blob)) {
-		LOG_ERR("SPAKE2P verifier is %u bytes, expected %u", (unsigned int)blob_len,
+		TM_LOG_ERR("SPAKE2P verifier is %u bytes, expected %u", (unsigned int)blob_len,
 			(unsigned int)sizeof(blob));
 		return -EINVAL;
 	}
@@ -319,13 +294,13 @@ static int load_verifier(void)
 	 * pasted in the wrong order -- w0 and L swapped would otherwise only
 	 * show up as an unexplainable commissioning failure. */
 	if (blob[MATTER_SPAKE_SCALAR_LEN] != 0x04u) {
-		LOG_ERR("SPAKE2P verifier: L does not start 0x04; w0 and L swapped?");
+		TM_LOG_ERR("SPAKE2P verifier: L does not start 0x04; w0 and L swapped?");
 		return -EINVAL;
 	}
 
-	if (unhex(CONFIG_TINYMATTER_SPAKE2P_SALT, s_verifier.salt, sizeof(s_verifier.salt),
+	if (unhex(s_cfg->salt_hex, s_verifier.salt, sizeof(s_verifier.salt),
 		  &salt_len) != 0) {
-		LOG_ERR("SPAKE2P salt is not valid hex, or longer than %u bytes",
+		TM_LOG_ERR("SPAKE2P salt is not valid hex, or longer than %u bytes",
 			(unsigned int)sizeof(s_verifier.salt));
 		return -EINVAL;
 	}
@@ -333,7 +308,7 @@ static int load_verifier(void)
 	memcpy(s_verifier.w0, blob, MATTER_SPAKE_SCALAR_LEN);
 	memcpy(s_verifier.l, blob + MATTER_SPAKE_SCALAR_LEN, MATTER_SPAKE_POINT_LEN);
 	s_verifier.salt_len = (uint8_t)salt_len;
-	s_verifier.iterations = CONFIG_TINYMATTER_SPAKE2P_ITERATIONS;
+	s_verifier.iterations = s_cfg->iterations;
 
 	return 0;
 }
@@ -341,8 +316,8 @@ static int load_verifier(void)
 /* ---- AdministratorCommissioning (0x003C) ---------------------------------- */
 /*
  * What Apple Home's "Turn On Pairing Mode" reaches. The cluster decodes; this
- * is everything with a side effect, because the core (src/) is compiled by
- * the host suite without Zephyr and must not learn about Bluetooth.
+ * is everything with a side effect: the advert, the window timer, and the
+ * transports.
  *
  * The commissioner supplies its OWN verifier, so the ecosystem being invited in
  * never learns this board's factory setup code. That is the whole point of the
@@ -366,7 +341,7 @@ static void admin_close(void)
 	}
 	s_verifier = s_factory_verifier;
 	s_admin_window = MATTER_ADMIN_WINDOW_NOT_OPEN;
-	atomic_set(&s_window_open_snapshot, 0);
+	atomic_store(&s_window_open_snapshot, 0);
 	s_admin_fabric = 0u;
 	s_admin_vendor = 0u;
 	matter_ble_set_discriminator(0u);
@@ -374,20 +349,18 @@ static void admin_close(void)
 	/* Withdraw the DNS-SD invitation with the same gesture that stops the BLE
 	 * one. Left up, it advertises a window this node will now refuse. */
 	(void)matter_thread_unadvertise_commissionable();
-	LOG_INF("commissioning window closed; factory setup code back in force");
+	TM_LOG_INF("commissioning window closed; factory setup code back in force");
 }
 
 /**
  * Work callback that closes the Matter commissioning window when the timeout expires.
  */
-static void admin_expire(struct k_work *work)
+static void admin_expire(void)
 {
-	ARG_UNUSED(work);
-	k_mutex_lock(&s_owner_lock, K_FOREVER);
+	tm_lock();
 	admin_close();
-	k_mutex_unlock(&s_owner_lock);
+	tm_unlock();
 }
-static K_WORK_DELAYABLE_DEFINE(s_admin_timer, admin_expire);
 
 /**
  * Open the Matter commissioning window for the specified kind (basic or enhanced) and timeout in
@@ -397,8 +370,8 @@ static K_WORK_DELAYABLE_DEFINE(s_admin_timer, admin_expire);
 static void admin_arm(uint16_t timeout_s, uint8_t kind)
 {
 	s_admin_window = kind;
-	atomic_set(&s_window_open_snapshot, 1);
-	(void)k_work_reschedule(&s_admin_timer, K_SECONDS(timeout_s));
+	atomic_store(&s_window_open_snapshot, 1);
+	(void)tm_work_reschedule(TM_WORK_ADMIN_EXPIRE, (uint32_t)timeout_s * 1000u);
 	matter_commission_readvertise();
 	/*
 	 * The BLE advert above is what Apple Home looks for. Every other
@@ -411,7 +384,7 @@ static void admin_arm(uint16_t timeout_s, uint8_t kind)
 	uint16_t discriminator = matter_ble_discriminator();
 
 	(void)matter_thread_advertise_commissionable(discriminator, MATTER_OPERATIONAL_PORT);
-	LOG_INF("commissioning window open for %u s (kind %u)", (unsigned)timeout_s,
+	TM_LOG_INF("commissioning window open for %u s (kind %u)", (unsigned)timeout_s,
 		(unsigned)kind);
 }
 
@@ -432,7 +405,7 @@ static uint8_t admin_open_enhanced(uint16_t timeout_s, const uint8_t *verifier,
 	    verifier_len != MATTER_SPAKE_SCALAR_LEN + MATTER_SPAKE_POINT_LEN ||
 	    salt_len == 0u || salt_len > sizeof(s_verifier.salt) ||
 	    verifier[MATTER_SPAKE_SCALAR_LEN] != 0x04u) {
-		LOG_WRN("OpenCommissioningWindow: bad PAKE parameters");
+		TM_LOG_WRN("OpenCommissioningWindow: bad PAKE parameters");
 		return MATTER_ADMIN_STATUS_PAKE_PARAM_ERROR;
 	}
 
@@ -477,7 +450,7 @@ static uint8_t admin_revoke(void)
 	if (s_admin_window == MATTER_ADMIN_WINDOW_NOT_OPEN) {
 		return MATTER_ADMIN_STATUS_WINDOW_NOT_OPEN;
 	}
-	(void)k_work_cancel_delayable(&s_admin_timer);
+	tm_work_cancel(TM_WORK_ADMIN_EXPIRE);
 	admin_close();
 	return 0u;
 }
@@ -492,16 +465,16 @@ static uint8_t admin_status(void)
 
 bool matter_commission_window_open(void)
 {
-	return atomic_get(&s_window_open_snapshot) != 0;
+	return atomic_load(&s_window_open_snapshot) != 0;
 }
 
 int matter_commission_open_window(uint16_t timeout_s)
 {
 	uint8_t st;
 
-	k_mutex_lock(&s_owner_lock, K_FOREVER);
+	tm_lock();
 	st = admin_open_basic(timeout_s);
-	k_mutex_unlock(&s_owner_lock);
+	tm_unlock();
 	return st == 0u ? 0 : -EBUSY;
 }
 
@@ -564,14 +537,14 @@ static int begin_session(void)
 	 * replacement name uses another free slot or waits in the desired table.
 	 */
 	if (s_info.attempt.active) {
-		LOG_INF("new commissioner; rolling back the abandoned attempt");
+		TM_LOG_INF("new commissioner; rolling back the abandoned attempt");
 	}
 	fabric_snapshot_refresh_owned();
 
 	if (tm_random(responder_random, sizeof(responder_random)) != 0 ||
 	    tm_random(y_entropy, sizeof(y_entropy)) != 0 ||
 	    tm_random(seed, sizeof(seed)) != 0) {
-		LOG_ERR("CSPRNG failed; refusing to start PASE");
+		TM_LOG_ERR("CSPRNG failed; refusing to start PASE");
 		return -EIO;
 	}
 	memcpy(&counter_seed, seed, sizeof(counter_seed));
@@ -598,7 +571,7 @@ static int begin_session(void)
 	rc = matter_pase_responder_init(&s_pase, &s_verifier, session_id, responder_random,
 					y_entropy);
 	if (rc != MATTER_OK) {
-		LOG_ERR("PASE responder init rc=%d (verifier parameters out of range?)", rc);
+		TM_LOG_ERR("PASE responder init rc=%d (verifier parameters out of range?)", rc);
 		return -EINVAL;
 	}
 
@@ -701,7 +674,7 @@ static uint8_t case_alloc_slot(void)
 	}
 	i = s_case_next_victim;
 	s_case_next_victim = (uint8_t)((s_case_next_victim + 1u) % MATTER_CASE_SESSIONS);
-	LOG_WRN("  all %u CASE slots live; evicting session 0x%04x", MATTER_CASE_SESSIONS,
+	TM_LOG_WRN("  all %u CASE slots live; evicting session 0x%04x", MATTER_CASE_SESSIONS,
 		(unsigned int)s_case_x[i].local_session_id);
 	/* Whatever that session was subscribed to dies with it. Leaving the
 	 * subscription behind would hold a slot for a peer that can no longer be
@@ -746,7 +719,7 @@ static size_t tx_slot_index(const struct matter_tx_slot *slot)
 
 static uint32_t tx_now_ms(void)
 {
-	int64_t now = k_uptime_get();
+	int64_t now = tm_uptime_ms();
 
 	return now > 0 ? (uint32_t)now : 0u;
 }
@@ -912,11 +885,11 @@ static void send_framed(uint8_t opcode, const uint8_t *payload, size_t len)
 	int rc;
 
 	if (slot == NULL) {
-		LOG_ERR("no owned packet slot for opcode 0x%02x", opcode);
+		TM_LOG_ERR("no owned packet slot for opcode 0x%02x", opcode);
 		return;
 	}
 	rc = tx_frame(slot, x, MATTER_PROTOCOL_SECURE_CHANNEL, opcode, payload, len, false, 0u);
-	LOG_DBG("sent opcode 0x%02x, %u B payload, rc=%d", opcode, (unsigned int)len, rc);
+	TM_LOG_DBG("sent opcode 0x%02x, %u B payload, rc=%d", opcode, (unsigned int)len, rc);
 }
 
 /**
@@ -934,10 +907,10 @@ static void notify_lock_state_changed(void);
 /* Re-arms the periodic report; defined with the table it walks. */
 static void subscription_heartbeat_arm(void);
 
-/* Storage runs on the system work queue, not OpenThread's small callback
- * stack. The caller waits for durability before the cluster emits success. */
+/* Storage runs through tm_run_deep(): on Zephyr the system work queue, not
+ * OpenThread's small callback stack. The caller waits for durability before
+ * the cluster emits success. */
 #define FAB_STORE_ATTEMPTS 3u
-#define FAB_STORE_TIMEOUT_MS 10000
 
 struct fab_store_request {
 	enum matter_fabric_store_operation operation;
@@ -949,17 +922,16 @@ struct fab_store_request {
 };
 
 static struct fab_store_request s_fab_request;
-static struct k_sem s_fab_done;
 
-static void fab_store_work_fn(struct k_work *w)
+static void fab_store_run(void *ctx)
 {
-	ARG_UNUSED(w);
-	/* Deliberately does not take s_owner_lock. Every caller of
+	(void)ctx;
+	/* Deliberately does not take the node lock. Every caller of
 	 * commissioning_fabric_store() is an Interaction Model command or
 	 * attribute write, which run under that lock, and the caller then
-	 * blocks on s_fab_done until this returns. Taking the lock here would
+	 * blocks in tm_run_deep() until this returns. Taking the lock here would
 	 * wait on the one thread that is waiting on us: a self-deadlock that
-	 * expired as FAB_STORE_TIMEOUT_MS and failed CommissioningComplete.
+	 * timed out and failed CommissioningComplete.
 	 * The submitter's lock IS this worker's mutual exclusion -- the baton
 	 * is handed over for the duration, not shared. */
 	s_fab_request.result = -EIO;
@@ -972,15 +944,13 @@ static void fab_store_work_fn(struct k_work *w)
 			break;
 		}
 	}
-	k_sem_give(&s_fab_done);
 }
-static K_WORK_DEFINE(s_fab_store_work, fab_store_work_fn);
 
 static int commissioning_fabric_store(void *ctx, const struct matter_device_info *info,
 			      enum matter_fabric_store_operation operation, uint8_t slot,
 			      const uint8_t *value, size_t value_len)
 {
-	ARG_UNUSED(ctx);
+	(void)ctx;
 	if (s_fab_request.busy || value_len > sizeof(s_fab_request.value)) {
 		return MATTER_E_STATE;
 	}
@@ -991,22 +961,16 @@ static int commissioning_fabric_store(void *ctx, const struct matter_device_info
 	if (value_len != 0u) {
 		memcpy(s_fab_request.value, value, value_len);
 	}
-	k_sem_reset(&s_fab_done);
-	if (k_work_submit(&s_fab_store_work) < 0) {
-		LOG_ERR("Matter identity durability work was not queued");
-		s_fab_request.busy = false;
-		return MATTER_E_STATE;
-	}
-	if (k_sem_take(&s_fab_done, K_MSEC(FAB_STORE_TIMEOUT_MS)) != 0) {
-		LOG_ERR("Matter identity durability boundary timed out");
+	if (tm_run_deep(fab_store_run, NULL) != 0) {
+		TM_LOG_ERR("Matter identity durability boundary timed out");
 		/* Fail closed. The worker may still own the static request after a
 		 * wait timeout, so reusing it could commit a mixed operation. A reboot
-		 * is the safe recovery if the system work queue is stuck this long. */
+		 * is the safe recovery if the port's worker is stuck this long. */
 		return MATTER_E_STATE;
 	}
 	s_fab_request.busy = false;
 	if (s_fab_request.result != 0) {
-		LOG_ERR("Matter identity mutation not persisted (%d)", s_fab_request.result);
+		TM_LOG_ERR("Matter identity mutation not persisted (%d)", s_fab_request.result);
 		return MATTER_E_STATE;
 	}
 	if (operation == MATTER_FABRIC_STORE_ACL) {
@@ -1021,14 +985,13 @@ static int commissioning_fabric_store(void *ctx, const struct matter_device_info
  * handshake, refusals and unsecured drops. Raise matter_ble to DBG to get the
  * rest back; nothing here was deleted.
  */
-	LOG_DBG("  ACL persisted for slot %u (%u B)", slot, (unsigned int)value_len);
+	TM_LOG_DBG("  ACL persisted for slot %u (%u B)", slot, (unsigned int)value_len);
 	}
 	return MATTER_OK;
 }
 
-static void failsafe_work_fn(struct k_work *w)
+static void failsafe_work_fn(void)
 {
-	ARG_UNUSED(w);
 	/* matter_clusters_failsafe_expire() wipes fabric slots and the
 	 * operational key, the same state every IM handler mutates under the
 	 * owner lock. This runs on the system work queue rather than a
@@ -1036,23 +999,23 @@ static void failsafe_work_fn(struct k_work *w)
 	 * them. Blocking is safe here: the only direction taken is owner ->
 	 * OpenThread, which is the order the expiry path itself follows when
 	 * it restarts Thread. */
-	k_mutex_lock(&s_owner_lock, K_FOREVER);
+	tm_lock();
 	matter_clusters_failsafe_expire(&s_info);
-	k_mutex_unlock(&s_owner_lock);
+	tm_unlock();
 }
-static K_WORK_DELAYABLE_DEFINE(s_failsafe_work, failsafe_work_fn);
 
 static int commissioning_failsafe_arm(void *ctx, uint16_t expiry_s)
 {
-	ARG_UNUSED(ctx);
-	return k_work_reschedule(&s_failsafe_work, K_SECONDS(expiry_s)) < 0 ? MATTER_E_STATE
-									 : MATTER_OK;
+	(void)ctx;
+	return tm_work_reschedule(TM_WORK_FAILSAFE, (uint32_t)expiry_s * 1000u) < 0
+		       ? MATTER_E_STATE
+		       : MATTER_OK;
 }
 
 static void commissioning_failsafe_cancel(void *ctx)
 {
-	ARG_UNUSED(ctx);
-	(void)k_work_cancel_delayable(&s_failsafe_work);
+	(void)ctx;
+	tm_work_cancel(TM_WORK_FAILSAFE);
 }
 
 static const struct matter_commissioning_hooks k_commissioning_hooks = {
@@ -1159,7 +1122,7 @@ static void send_read_chunk(struct matter_im_read_state *s)
 	int rc;
 
 	if (slot == NULL) {
-		LOG_ERR("no owned packet slot for Read ReportData");
+		TM_LOG_ERR("no owned packet slot for Read ReportData");
 		s->in_use = false;
 		return;
 	}
@@ -1168,19 +1131,19 @@ static void send_read_chunk(struct matter_im_read_state *s)
 					 payload_cap, &report_len, &more, &emitted,
 					 &stats);
 	if (rc != MATTER_OK) {
-		LOG_ERR("cannot build Read ReportData chunk (%d)", rc);
+		TM_LOG_ERR("cannot build Read ReportData chunk (%d)", rc);
 		tx_abort_build(slot);
 		s->in_use = false;
 		return;
 	}
 	if (emitted == 0u && more) {
-		LOG_ERR("a single Read attribute does not fit one Matter message");
+		TM_LOG_ERR("a single Read attribute does not fit one Matter message");
 		tx_abort_build(slot);
 		s->in_use = false;
 		return;
 	}
 	if (stats.unexpanded_wildcard > 0u) {
-		LOG_WRN("%u wildcard path(s) not expanded; Read report is incomplete",
+		TM_LOG_WRN("%u wildcard path(s) not expanded; Read report is incomplete",
 			stats.unexpanded_wildcard);
 	}
 /*
@@ -1195,7 +1158,7 @@ static void send_read_chunk(struct matter_im_read_state *s)
  * drops, window changes -- because those are what a capture is read for, and
  * losing them was the alternative on the table.
  */
-	LOG_DBG("  Read chunk %u B, %u report(s), %u total, %s",
+	TM_LOG_DBG("  Read chunk %u B, %u report(s), %u total, %s",
 		(unsigned int)report_len, emitted, (unsigned int)(s->sent + emitted),
 		more ? "MORE" : "last");
 	s_tx_effects[tx_slot_index(slot)] = (struct tx_effect){
@@ -1210,7 +1173,7 @@ static void send_read_chunk(struct matter_im_read_state *s)
 		     (s_thread_reply != NULL && !s_thread_pase) ? &s_case_x[s_case_cur] : &s_exchange,
 		     MATTER_PROTOCOL_INTERACTION_MODEL, MATTER_IM_OP_REPORT_DATA, payload, report_len,
 		     false, 0u) != MATTER_OK) {
-		LOG_ERR("Read ReportData was not accepted by its transport");
+		TM_LOG_ERR("Read ReportData was not accepted by its transport");
 		s->in_use = false;
 	}
 }
@@ -1233,7 +1196,7 @@ static void on_read_request(const struct matter_exchange_in *in)
 	if (rc == MATTER_E_DUP) {
 		/* Exchange replay filtering normally consumes this earlier. Keep the
 		 * cursor intact if a duplicate ever reaches this boundary. */
-		LOG_WRN("duplicate ReadRequest reached the cursor owner");
+		TM_LOG_WRN("duplicate ReadRequest reached the cursor owner");
 		return;
 	}
 	if (rc != MATTER_OK) {
@@ -1241,7 +1204,7 @@ static void on_read_request(const struct matter_exchange_in *in)
 		uint8_t *payload;
 		size_t payload_cap;
 
-		LOG_WRN("two chunked Reads are already live; refusing another");
+		TM_LOG_WRN("two chunked Reads are already live; refusing another");
 		payload = tx_payload(slot, &payload_cap);
 		if (slot != NULL &&
 		    matter_im_status_response_encode(MATTER_IM_STATUS_RESOURCE_EXHAUSTED,
@@ -1259,7 +1222,7 @@ static void on_read_request(const struct matter_exchange_in *in)
 	}
 	rc = matter_im_read_request_decode(in->payload, in->payload_len, &s->read);
 	if (rc != MATTER_OK) {
-		LOG_WRN("unreadable ReadRequest (%d), %u B", rc, (unsigned int)in->payload_len);
+		TM_LOG_WRN("unreadable ReadRequest (%d), %u B", rc, (unsigned int)in->payload_len);
 		s->in_use = false;
 		return;
 	}
@@ -1276,13 +1239,13 @@ static void on_read_request(const struct matter_exchange_in *in)
 		 * ring before the interesting half of the session began.
 		 */
 		if (s_thread_reply == NULL) {
-			LOG_DBG("  read[%u] endpoint %d cluster 0x%04x attribute 0x%04x", i,
+			TM_LOG_DBG("  read[%u] endpoint %d cluster 0x%04x attribute 0x%04x", i,
 				p->have_endpoint ? (int)p->endpoint : -1,
 				p->have_cluster ? (unsigned int)p->cluster : 0xFFFFu,
 				p->have_attribute ? (unsigned int)p->attribute : 0xFFFFu);
 			continue;
 		}
-		LOG_DBG("  read[%u] endpoint %d cluster 0x%04x attribute 0x%04x", i,
+		TM_LOG_DBG("  read[%u] endpoint %d cluster 0x%04x attribute 0x%04x", i,
 			p->have_endpoint ? (int)p->endpoint : -1,
 			p->have_cluster ? (unsigned int)p->cluster : 0xFFFFu,
 			p->have_attribute ? (unsigned int)p->attribute : 0xFFFFu);
@@ -1309,15 +1272,15 @@ static void on_invoke_request(const struct matter_exchange_in *in)
 
 	rc = matter_im_invoke_request_decode(in->payload, in->payload_len, &inv);
 	if (rc != MATTER_OK) {
-		LOG_WRN("unreadable InvokeRequest (%d), %u B", rc, (unsigned int)in->payload_len);
+		TM_LOG_WRN("unreadable InvokeRequest (%d), %u B", rc, (unsigned int)in->payload_len);
 		return;
 	}
 	if (s_thread_reply != NULL) {
-		LOG_INF("  invoke: endpoint %u cluster 0x%04x command 0x%04x, %u B fields",
+		TM_LOG_INF("  invoke: endpoint %u cluster 0x%04x command 0x%04x, %u B fields",
 			inv.endpoint, (unsigned int)inv.cluster, (unsigned int)inv.command,
 			(unsigned int)inv.fields_len);
 	} else {
-		LOG_DBG("  invoke: endpoint %u cluster 0x%04x command 0x%04x, %u B fields",
+		TM_LOG_DBG("  invoke: endpoint %u cluster 0x%04x command 0x%04x, %u B fields",
 			inv.endpoint, (unsigned int)inv.cluster, (unsigned int)inv.command,
 			(unsigned int)inv.fields_len);
 	}
@@ -1330,7 +1293,7 @@ static void on_invoke_request(const struct matter_exchange_in *in)
 
 	slot = tx_acquire();
 	if (slot == NULL) {
-		LOG_ERR("no owned packet slot for InvokeResponse");
+		TM_LOG_ERR("no owned packet slot for InvokeResponse");
 		return;
 	}
 	payload = tx_payload(slot, &payload_cap);
@@ -1344,7 +1307,7 @@ static void on_invoke_request(const struct matter_exchange_in *in)
 	 * which nothing here prints. A controller that walks away after a
 	 * clean-looking exchange is otherwise unexplainable from this log. */
 	if (s_thread_reply != NULL && s_info.last_commissioning_error != MATTER_COMMISSIONING_OK) {
-		LOG_WRN("  commissioning error %u after cluster 0x%04x command 0x%04x "
+		TM_LOG_WRN("  commissioning error %u after cluster 0x%04x command 0x%04x "
 			"(fabric %u, %u committed)",
 			(unsigned int)s_info.last_commissioning_error,
 			(unsigned int)inv.cluster, (unsigned int)inv.command,
@@ -1352,7 +1315,7 @@ static void on_invoke_request(const struct matter_exchange_in *in)
 			(unsigned int)s_info.committed_slots);
 	}
 	if (rc != MATTER_OK) {
-		LOG_ERR("cannot build InvokeResponse (%d)", rc);
+		TM_LOG_ERR("cannot build InvokeResponse (%d)", rc);
 		tx_abort_build(slot);
 		return;
 	}
@@ -1377,7 +1340,7 @@ static void on_invoke_request(const struct matter_exchange_in *in)
 		 * a hexdump of the network key would be 700 bytes of an 8 KB
 		 * trace buffer spent on printing a secret.
 		 */
-		LOG_INF("  Thread dataset: %u B, extended PAN id %s",
+		TM_LOG_INF("  Thread dataset: %u B, extended PAN id %s",
 			(unsigned int)s_info.thread_dataset_len,
 			s_info.have_thread_xpanid ? "found" : "MISSING");
 	}
@@ -1405,7 +1368,7 @@ static void on_invoke_request(const struct matter_exchange_in *in)
 				break;
 			}
 		}
-		LOG_INF("  AddNOC -> status %u, fabric index %u, node %08x%08x on fabric %08x%08x",
+		TM_LOG_INF("  AddNOC -> status %u, fabric index %u, node %08x%08x on fabric %08x%08x",
 			s_info.last_noc_status, s_info.last_noc_index,
 			added ? (unsigned int)(added->node_id >> 32) : 0u,
 			added ? (unsigned int)added->node_id : 0u,
@@ -1418,7 +1381,7 @@ static void on_invoke_request(const struct matter_exchange_in *in)
 	if (removed) {
 		/* Whose fabric went and who asked: what tells a controller
 		 * abandoning this node from one tidying up after another. */
-		LOG_WRN("  -> fabric %u removed by fabric %u", s_info.last_noc_index,
+		TM_LOG_WRN("  -> fabric %u removed by fabric %u", s_info.last_noc_index,
 			s_info.accessing_fabric_index);
 	}
 	/*
@@ -1438,7 +1401,7 @@ static void on_invoke_request(const struct matter_exchange_in *in)
 	 */
 	if (resp_len == 0u) {
 		/* The command ran; the peer asked not to be told. */
-		LOG_INF("invoke done, response suppressed");
+		TM_LOG_INF("invoke done, response suppressed");
 		tx_abort_build(slot);
 		if (removed) {
 			case_drop_fabric(s_info.last_noc_index);
@@ -1454,7 +1417,7 @@ static void on_invoke_request(const struct matter_exchange_in *in)
 	if (removed) {
 		case_drop_fabric(s_info.last_noc_index);
 	}
-	LOG_DBG("InvokeResponse: %u B", (unsigned int)resp_len);
+	TM_LOG_DBG("InvokeResponse: %u B", (unsigned int)resp_len);
 }
 
 /**
@@ -1477,16 +1440,16 @@ static void on_write_request(const struct matter_exchange_in *in)
 
 	rc = matter_im_write_request_decode(in->payload, in->payload_len, &wr);
 	if (rc != MATTER_OK) {
-		LOG_WRN("unreadable WriteRequest (%d), %u B", rc, (unsigned int)in->payload_len);
+		TM_LOG_WRN("unreadable WriteRequest (%d), %u B", rc, (unsigned int)in->payload_len);
 		return;
 	}
-	LOG_INF("  write: endpoint %u cluster 0x%04x attribute 0x%04x, %u B", wr.path.endpoint,
+	TM_LOG_INF("  write: endpoint %u cluster 0x%04x attribute 0x%04x, %u B", wr.path.endpoint,
 		(unsigned int)wr.path.cluster, (unsigned int)wr.path.attribute,
 		(unsigned int)wr.data_len);
 	/* The ACL decides which controller may operate the lock; its raw
 	 * bytes are the only way to see WHICH subject Apple granted. */
 	if (wr.path.cluster == MATTER_CLUSTER_ACCESS_CONTROL && wr.path.attribute == 0u) {
-		LOG_HEXDUMP_INF(wr.data, wr.data_len, "  ACL bytes:");
+		TM_LOG_HEXDUMP_INF(wr.data, wr.data_len, "  ACL bytes:");
 	}
 
 	/*
@@ -1499,20 +1462,20 @@ static void on_write_request(const struct matter_exchange_in *in)
 	prev_relock_s = s_info.auto_relock_time_s;
 	slot = tx_acquire();
 	if (slot == NULL) {
-		LOG_ERR("no owned packet slot for WriteResponse");
+		TM_LOG_ERR("no owned packet slot for WriteResponse");
 		return;
 	}
 	payload = tx_payload(slot, &payload_cap);
 	rc = matter_im_write_response_encode(&s_im, &wr, payload, payload_cap, &resp_len);
 	if (rc != MATTER_OK) {
-		LOG_ERR("cannot build WriteResponse (%d)", rc);
+		TM_LOG_ERR("cannot build WriteResponse (%d)", rc);
 		tx_abort_build(slot);
 		return;
 	}
 	(void)matter_dl_attr_store(&s_info, prev_relock_s);
 	if (resp_len == 0u) {
 		/* The write ran; the peer asked not to be told. */
-		LOG_DBG("  write done, response suppressed");
+		TM_LOG_DBG("  write done, response suppressed");
 		tx_abort_build(slot);
 		return;
 	}
@@ -1605,9 +1568,6 @@ static uint8_t s_sub_next_victim;
  * StatusResponse says so either way, and the log lines below name which
  * happened -- that is the whole experiment.
  */
-#define SUB_TREE     "msub"
-#define SUB_KEY_FMT  SUB_TREE "/%u"
-#define SUB_KEY_MAX  16u
 
 /**
  * Persisted subscription state: peer node ID, subscription ID, maximum heartbeat interval in
@@ -1623,6 +1583,9 @@ struct sub_persist {
 };
 
 static struct sub_persist s_dormant[MATTER_CASE_SESSIONS];
+_Static_assert(TM_KV_KEY_MATTER_SUB_SLOT0 + MATTER_CASE_SESSIONS <=
+		       TM_KV_KEY_MATTER_SUB_SLOT_LIMIT,
+	       "one storage key per CASE session");
 
 /*
  * Subscription ids, and why this is not a local static.
@@ -1637,7 +1600,7 @@ static struct sub_persist s_dormant[MATTER_CASE_SESSIONS];
 static uint32_t s_sub_next_id;
 
 /**
- * Persist one subscription's state to settings storage with the key SUB_KEY_FMT[slot]. Skip
+ * Persist one subscription's state under TM_KV_KEY_MATTER_SUB_SLOT0 + slot. Skip
  * persisting if peer_node or fabric_index is zero (no match key available). Log a warning if save
  * fails; the subscription will not survive reboot.
  */
@@ -1651,8 +1614,6 @@ static void sub_persist_save(uint8_t slot, const struct sub_state *s, uint64_t p
 		.fabric_index = fabric_index,
 		.used = 1u,
 	};
-	char key[SUB_KEY_MAX];
-
 	for (size_t i = 0u; i < MATTER_SUPPORTED_FABRICS; i++) {
 		if (s_info.fabrics[i].index == fabric_index &&
 		    (s_info.committed_slots & MATTER_FABRIC_SLOT_BIT(i)) != 0u) {
@@ -1666,30 +1627,12 @@ static void sub_persist_save(uint8_t slot, const struct sub_state *s, uint64_t p
 		 * record no CASE session can ever claim. */
 		return;
 	}
-	(void)snprintf(key, sizeof(key), SUB_KEY_FMT, (unsigned int)slot);
-	if (settings_save_one(key, &p, sizeof(p)) != 0) {
-		LOG_WRN("  subscription 0x%08x not persisted; it will not survive a reboot",
+	if (tm_kv_set(TM_KV_KEY_MATTER_SUB_SLOT0 + slot, &p, sizeof(p)) != TM_KV_OK) {
+		TM_LOG_WRN("  subscription 0x%08x not persisted; it will not survive a reboot",
 			(unsigned int)s->id);
 		return;
 	}
 	s_dormant[slot] = p;
-}
-
-/**
- * Settings callback to load one persisted subscription from the settings key-value store. Reads up
- * to len bytes into *out if len matches the struct size. Returns 0.
- */
-static int sub_persist_read(const char *key, size_t len, settings_read_cb read_cb, void *cb_arg,
-			    void *param)
-{
-	struct sub_persist *out = param;
-
-	ARG_UNUSED(key);
-
-	if (len == sizeof(*out)) {
-		(void)read_cb(cb_arg, out, sizeof(*out));
-	}
-	return 0;
 }
 
 /** Load the stored records, dormant until a matching CASE session turns up. */
@@ -1698,10 +1641,12 @@ static void sub_persist_load(void)
 	unsigned int n = 0u;
 
 	for (uint8_t i = 0u; i < MATTER_CASE_SESSIONS; i++) {
-		char key[SUB_KEY_MAX];
+		size_t len = sizeof(s_dormant[i]);
 
-		(void)snprintf(key, sizeof(key), SUB_KEY_FMT, (unsigned int)i);
-		(void)settings_load_subtree_direct(key, sub_persist_read, &s_dormant[i]);
+		if (tm_kv_get(TM_KV_KEY_MATTER_SUB_SLOT0 + i, &s_dormant[i], &len) != TM_KV_OK ||
+		    len != sizeof(s_dormant[i])) {
+			memset(&s_dormant[i], 0, sizeof(s_dormant[i]));
+		}
 		if (s_dormant[i].used) {
 			n++;
 			if (s_dormant[i].id > s_sub_next_id) {
@@ -1710,7 +1655,7 @@ static void sub_persist_load(void)
 		}
 	}
 	if (n > 0u) {
-		LOG_DBG("  %u subscription(s) held over the reboot, waiting for their controller",
+		TM_LOG_DBG("  %u subscription(s) held over the reboot, waiting for their controller",
 			n);
 	}
 }
@@ -1740,7 +1685,7 @@ static void sub_resume_for(uint8_t case_slot, uint64_t peer_node, uint8_t fabric
 	struct matter_thread_peer peer;
 	struct sub_state *s;
 
-	ARG_UNUSED(case_slot);
+	(void)case_slot;
 
 	if (peer_node == 0u || fabric_index == 0u) {
 		return;
@@ -1785,7 +1730,7 @@ static void sub_resume_for(uint8_t case_slot, uint64_t peer_node, uint8_t fabric
 	s->priming = false;
 	s->peer = peer;
 
-	LOG_DBG("  subscription 0x%08x RESUMED on session 0x%04x after the reboot",
+	TM_LOG_DBG("  subscription 0x%08x RESUMED on session 0x%04x after the reboot",
 		(unsigned int)s->id, (unsigned int)session_id);
 	subscription_heartbeat_arm();
 }
@@ -1933,7 +1878,7 @@ static void notify_lock_state(struct sub_state *s)
 	 * reads like bookkeeping and is the only evidence that the state a
 	 * person can see on a hub came from the state the bolt is actually in.
 	 */
-	LOG_INF("  LockState report to subscription 0x%08x, %u B, rc=%d", (unsigned int)s->id,
+	TM_LOG_INF("  LockState report to subscription 0x%08x, %u B, rc=%d", (unsigned int)s->id,
 		(unsigned int)framed, rc);
 	/*
 	 * Advance the watermark only on a report that went out. Moving it before
@@ -1949,21 +1894,15 @@ static void notify_lock_state(struct sub_state *s)
 /**
  * Work callback that sends lock state subscription reports to all CASE sessions.
  */
-static void notify_work_fn(struct k_work *w)
+static void notify_work_fn(void)
 {
-	ARG_UNUSED(w);
-	k_mutex_lock(&s_owner_lock, K_FOREVER);
+	tm_lock();
 
 	for (uint8_t i = 0u; i < MATTER_CASE_SESSIONS; i++) {
 		notify_lock_state(&s_subs[i]);
 	}
-	k_mutex_unlock(&s_owner_lock);
+	tm_unlock();
 }
-
-static K_WORK_DEFINE(s_notify_work, notify_work_fn);
-
-static void heartbeat_work_fn(struct k_work *w);
-static K_WORK_DELAYABLE_DEFINE(s_heartbeat_work, heartbeat_work_fn);
 
 /**
  * Submit lock state change notification to the work queue, and tell the
@@ -1977,7 +1916,7 @@ static K_WORK_DELAYABLE_DEFINE(s_heartbeat_work, heartbeat_work_fn);
 static void notify_lock_state_changed(void)
 {
 	matter_commission_lock_state(s_info.lock_state);
-	k_work_submit(&s_notify_work);
+	(void)tm_work_schedule(TM_WORK_NOTIFY, 0u);
 }
 
 /*
@@ -2007,7 +1946,7 @@ static void notify_lock_state_changed(void)
  * heartbeat first.
  */
 #define SUBSCRIPTION_MAX_INTERVAL_S 180u
-BUILD_ASSERT(SUBSCRIPTION_MAX_INTERVAL_S > SUBSCRIPTION_HEARTBEAT_S,
+_Static_assert(SUBSCRIPTION_MAX_INTERVAL_S > SUBSCRIPTION_HEARTBEAT_S,
 	     "a granted interval at or below the heartbeat lapses every subscription");
 
 /*
@@ -2071,12 +2010,11 @@ static uint32_t subscription_heartbeat_period_s(void)
  * Work callback that sends lock state subscription reports to all active CASE sessions and
  * reschedules itself only if at least one subscription remains active.
  */
-static void heartbeat_work_fn(struct k_work *w)
+static void heartbeat_work_fn(void)
 {
 	bool any = false;
 
-	ARG_UNUSED(w);
-	k_mutex_lock(&s_owner_lock, K_FOREVER);
+	tm_lock();
 
 	for (uint8_t i = 0u; i < MATTER_CASE_SESSIONS; i++) {
 		if (s_subs[i].in_use && s_subs[i].active) {
@@ -2087,10 +2025,10 @@ static void heartbeat_work_fn(struct k_work *w)
 	/* Stops re-arming itself once nothing is subscribed, so a node nobody
 	 * is watching is not waking its radio every two minutes. */
 	if (any) {
-		(void)k_work_schedule(&s_heartbeat_work,
-				      K_SECONDS(subscription_heartbeat_period_s()));
+		(void)tm_work_schedule(TM_WORK_HEARTBEAT,
+				       subscription_heartbeat_period_s() * 1000u);
 	}
-	k_mutex_unlock(&s_owner_lock);
+	tm_unlock();
 }
 
 /**
@@ -2098,13 +2036,13 @@ static void heartbeat_work_fn(struct k_work *w)
  */
 static void subscription_heartbeat_arm(void)
 {
-	(void)k_work_schedule(&s_heartbeat_work, K_SECONDS(subscription_heartbeat_period_s()));
+	(void)tm_work_schedule(TM_WORK_HEARTBEAT, subscription_heartbeat_period_s() * 1000u);
 }
 
 /** The clock an event's SystemTimestamp is taken from. */
 static uint64_t matter_event_uptime_ms(void)
 {
-	int64_t ms = k_uptime_get();
+	int64_t ms = tm_uptime_ms();
 
 	return ms > 0 ? (uint64_t)ms : 0u;
 }
@@ -2236,21 +2174,20 @@ static void tx_thread_reap_schedule_owned(uint32_t now_ms)
 	if (have_next) {
 		int32_t delay_ms = (int32_t)(next_deadline - now_ms);
 
-		(void)k_work_reschedule(&s_thread_reap_work,
-						delay_ms <= 0 ? K_NO_WAIT : K_MSEC(delay_ms));
+		(void)tm_work_reschedule(TM_WORK_THREAD_REAP,
+					 delay_ms <= 0 ? 0u : (uint32_t)delay_ms);
 	}
 }
 
-static void tx_thread_reap_work_fn(struct k_work *work)
+static void tx_thread_reap_work_fn(void)
 {
 	uint32_t now_ms;
 
-	ARG_UNUSED(work);
-	k_mutex_lock(&s_owner_lock, K_FOREVER);
+	tm_lock();
 	now_ms = tx_now_ms();
 	tx_thread_reap_expired(now_ms);
 	tx_thread_reap_schedule_owned(now_ms);
-	k_mutex_unlock(&s_owner_lock);
+	tm_unlock();
 }
 
 static void tx_thread_reap_expired(uint32_t now_ms)
@@ -2260,7 +2197,7 @@ static void tx_thread_reap_expired(uint32_t now_ms)
 	while ((slot = matter_tx_pool_expired(&s_tx_pool, TX_TRANSPORT_THREAD, now_ms)) != NULL) {
 		struct tx_thread_owner *owner = &s_tx_thread_owner[tx_slot_index(slot)];
 
-		LOG_WRN("reaping abandoned Thread reply token %u", (unsigned int)slot->token);
+		TM_LOG_WRN("reaping abandoned Thread reply token %u", (unsigned int)slot->token);
 		tx_effect_finish(slot, MATTER_E_STATE);
 		memset(owner, 0, sizeof(*owner));
 		(void)matter_tx_pool_reject(&s_tx_pool, slot->token);
@@ -2300,7 +2237,7 @@ void matter_commission_ble_tx_complete(int status)
 	struct matter_tx_slot *slot;
 	uint32_t token;
 
-	k_mutex_lock(&s_owner_lock, K_FOREVER);
+	tm_lock();
 	token = s_ble_tx_token;
 	s_ble_tx_token = 0u;
 	slot = matter_tx_pool_find(&s_tx_pool, token);
@@ -2324,7 +2261,7 @@ void matter_commission_ble_tx_complete(int status)
 			}
 		}
 	}
-	k_mutex_unlock(&s_owner_lock);
+	tm_unlock();
 }
 
 /**
@@ -2346,8 +2283,6 @@ static void case_drop_fabric(uint8_t fabric_index)
 	struct sub_persist tombstone = {0};
 
 	for (uint8_t i = 0u; i < MATTER_CASE_SESSIONS; i++) {
-		char key[SUB_KEY_MAX];
-
 		if (s_case_ready[i] && s_case_fabric[i] == fabric_index) {
 			uint16_t session_id = s_case_x[i].local_session_id;
 
@@ -2360,9 +2295,9 @@ static void case_drop_fabric(uint8_t fabric_index)
 			continue;
 		}
 		memset(&s_dormant[i], 0, sizeof(s_dormant[i]));
-		(void)snprintf(key, sizeof(key), SUB_KEY_FMT, (unsigned int)i);
-		if (settings_save_one(key, &tombstone, sizeof(tombstone)) != 0) {
-			LOG_WRN("  removed fabric %u subscription tombstone not persisted",
+		if (tm_kv_set(TM_KV_KEY_MATTER_SUB_SLOT0 + i, &tombstone, sizeof(tombstone)) !=
+		    TM_KV_OK) {
+			TM_LOG_WRN("  removed fabric %u subscription tombstone not persisted",
 				(unsigned int)fabric_index);
 		}
 	}
@@ -2392,7 +2327,7 @@ static struct sub_state *sub_alloc(uint16_t session_id)
 	}
 	i = s_sub_next_victim;
 	s_sub_next_victim = (uint8_t)((s_sub_next_victim + 1u) % MATTER_CASE_SESSIONS);
-	LOG_WRN("  all %u subscription slots live; dropping 0x%08x", MATTER_CASE_SESSIONS,
+	TM_LOG_WRN("  all %u subscription slots live; dropping 0x%08x", MATTER_CASE_SESSIONS,
 		(unsigned int)s_subs[i].id);
 	return &s_subs[i];
 }
@@ -2417,7 +2352,7 @@ static void send_report_chunk(struct sub_state *s)
 	int rc;
 
 	if (slot == NULL) {
-		LOG_ERR("no owned packet slot for subscription ReportData");
+		TM_LOG_ERR("no owned packet slot for subscription ReportData");
 		s->in_use = false;
 		return;
 	}
@@ -2426,7 +2361,7 @@ static void send_report_chunk(struct sub_state *s)
 					 payload_cap, &report_len, &more, &emitted,
 					 &stats);
 	if (rc != MATTER_OK) {
-		LOG_ERR("cannot build the report chunk (%d)", rc);
+		TM_LOG_ERR("cannot build the report chunk (%d)", rc);
 		tx_abort_build(slot);
 		return;
 	}
@@ -2434,14 +2369,14 @@ static void send_report_chunk(struct sub_state *s)
 		/* Not a chunk boundary -- one report is larger than a whole
 		 * message, and no number of chunks will help. */
 		if (stats.have_stuck) {
-			LOG_ERR("endpoint %u cluster 0x%04x attribute 0x%04x does not fit "
+			TM_LOG_ERR("endpoint %u cluster 0x%04x attribute 0x%04x does not fit "
 				"a %u B message; giving up",
 				(unsigned int)stats.stuck_endpoint,
 				(unsigned int)stats.stuck_cluster,
 				(unsigned int)stats.stuck_attribute,
 				(unsigned int)payload_cap);
 		} else {
-			LOG_ERR("a single attribute does not fit a message; giving up");
+			TM_LOG_ERR("a single attribute does not fit a message; giving up");
 		}
 		tx_abort_build(slot);
 		s->more = false;
@@ -2452,7 +2387,7 @@ static void send_report_chunk(struct sub_state *s)
 	 * a report that frames cleanly and is then dropped by the network, and
 	 * debug level is off in every image that gets flashed.
 	 */
-	LOG_DBG("  chunk %u B, %u report(s), %u total, %s", (unsigned int)report_len, emitted,
+	TM_LOG_DBG("  chunk %u B, %u report(s), %u total, %s", (unsigned int)report_len, emitted,
 		(unsigned int)(s->sent + emitted), more ? "MORE" : "last");
 	s_tx_effects[tx_slot_index(slot)] = (struct tx_effect){
 		.kind = TX_EFFECT_SUB_PRIME,
@@ -2487,7 +2422,7 @@ static void on_subscribe_request(const struct matter_exchange_in *in)
 
 	rc = matter_im_subscribe_request_decode(in->payload, in->payload_len, &sub);
 	if (rc != MATTER_OK) {
-		LOG_WRN("unreadable SubscribeRequest (%d), %u B", rc, (unsigned int)in->payload_len);
+		TM_LOG_WRN("unreadable SubscribeRequest (%d), %u B", rc, (unsigned int)in->payload_len);
 		return;
 	}
 	matter_thread_peer_current(&peer);
@@ -2538,7 +2473,7 @@ static void on_subscribe_request(const struct matter_exchange_in *in)
 	s->priming = true;
 	s->active = false;
 
-	LOG_DBG("  subscribe: %u path(s), %u..%u s, id 0x%08x, session 0x%04x", s->read.n_paths,
+	TM_LOG_DBG("  subscribe: %u path(s), %u..%u s, id 0x%08x, session 0x%04x", s->read.n_paths,
 		sub.min_interval_s, sub.max_interval_s, (unsigned int)s->id,
 		(unsigned int)s->session_id);
 	/*
@@ -2550,7 +2485,7 @@ static void on_subscribe_request(const struct matter_exchange_in *in)
 	for (uint8_t i = 0; i < s->read.n_paths; i++) {
 		const struct matter_im_path *p = &s->read.paths[i];
 
-		LOG_DBG("  sub[%u] endpoint %d cluster 0x%04x attribute 0x%04x", i,
+		TM_LOG_DBG("  sub[%u] endpoint %d cluster 0x%04x attribute 0x%04x", i,
 			p->have_endpoint ? (int)p->endpoint : -1,
 			p->have_cluster ? (unsigned int)p->cluster : 0xFFFFu,
 			p->have_attribute ? (unsigned int)p->attribute : 0xFFFFu);
@@ -2596,20 +2531,20 @@ static void on_timed_request(const struct matter_exchange_in *in)
 	size_t resp_len = 0u;
 
 	if (matter_im_timed_request_decode(in->payload, in->payload_len, &timeout_ms) != MATTER_OK) {
-		LOG_WRN("  malformed TimedRequest");
+		TM_LOG_WRN("  malformed TimedRequest");
 		return;
 	}
-	LOG_DBG("  timed request: %u ms, answering SUCCESS", (unsigned int)timeout_ms);
+	TM_LOG_DBG("  timed request: %u ms, answering SUCCESS", (unsigned int)timeout_ms);
 
 	slot = tx_acquire();
 	if (slot == NULL) {
-		LOG_ERR("  no owned packet slot for StatusResponse");
+		TM_LOG_ERR("  no owned packet slot for StatusResponse");
 		return;
 	}
 	payload = tx_payload(slot, &payload_cap);
 	if (matter_im_status_response_encode(MATTER_IM_STATUS_SUCCESS, payload, payload_cap,
 					     &resp_len) != MATTER_OK) {
-		LOG_ERR("  cannot encode the StatusResponse");
+		TM_LOG_ERR("  cannot encode the StatusResponse");
 		tx_abort_build(slot);
 		return;
 	}
@@ -2641,7 +2576,7 @@ static void on_status_response(const struct matter_exchange_in *in)
 
 	if (matter_im_status_response_decode(in->payload, in->payload_len, &status) != MATTER_OK ||
 	    status != MATTER_IM_STATUS_SUCCESS) {
-		LOG_WRN("invalid or unsuccessful StatusResponse");
+		TM_LOG_WRN("invalid or unsuccessful StatusResponse");
 		if (read != NULL) {
 			read->in_use = false;
 		}
@@ -2685,19 +2620,19 @@ static void on_status_response(const struct matter_exchange_in *in)
 	size_t payload_cap;
 
 	if (slot == NULL) {
-		LOG_ERR("no owned packet slot for SubscribeResponse");
+		TM_LOG_ERR("no owned packet slot for SubscribeResponse");
 		s->in_use = false;
 		return;
 	}
 	payload = tx_payload(slot, &payload_cap);
 	if (matter_im_subscribe_response_encode(s->id, s->max_interval_s, payload,
 						payload_cap, &resp_len) != MATTER_OK) {
-		LOG_ERR("cannot build the SubscribeResponse");
+		TM_LOG_ERR("cannot build the SubscribeResponse");
 		tx_abort_build(slot);
 		s->in_use = false;
 		return;
 	}
-	LOG_DBG("  subscription 0x%08x ESTABLISHED on session 0x%04x, max interval %u s",
+	TM_LOG_DBG("  subscription 0x%08x ESTABLISHED on session 0x%04x, max interval %u s",
 		(unsigned int)s->id, (unsigned int)s->session_id, s->max_interval_s);
 	s_tx_effects[tx_slot_index(slot)] = (struct tx_effect){
 		.kind = TX_EFFECT_SUB_RESPONSE,
@@ -2766,9 +2701,9 @@ static void on_secure(const struct matter_exchange_in *in)
 	 * keys are gone by the time anyone reads the trace, and no PASE secret
 	 * is reachable from here.
 	 */
-	LOG_INF("secure message: protocol 0x%04x opcode 0x%02x, %u B payload (unhandled)",
+	TM_LOG_INF("secure message: protocol 0x%04x opcode 0x%02x, %u B payload (unhandled)",
 		(unsigned int)in->protocol_id, in->opcode, (unsigned int)in->payload_len);
-	LOG_HEXDUMP_INF(in->payload, in->payload_len, "payload");
+	TM_LOG_HEXDUMP_INF(in->payload, in->payload_len, "payload");
 }
 
 /**
@@ -2857,7 +2792,7 @@ static size_t send_sigma2(const struct matter_case_sigma1 *s1, const uint8_t *ip
 
 	if (f->icac_len > 0u &&
 	    (s_info.icac.owner_index != f->index || s_info.icac.len != f->icac_len)) {
-		LOG_ERR("  fabric %u references an unavailable ICAC", (unsigned int)f->index);
+		TM_LOG_ERR("  fabric %u references an unavailable ICAC", (unsigned int)f->index);
 		return 0u;
 	}
 
@@ -2885,7 +2820,7 @@ static size_t send_sigma2(const struct matter_case_sigma1 *s1, const uint8_t *ip
 	    tm_random(s_case.resumption_id, sizeof(s_case.resumption_id)) != 0 ||
 	    tm_random((uint8_t *)&s_case.local_session_id, sizeof(s_case.local_session_id)) !=
 		    0)) {
-		LOG_ERR("  no entropy for Sigma2");
+		TM_LOG_ERR("  no entropy for Sigma2");
 		return 0u;
 	}
 	/* Session id 0 means "unsecured" on the wire, so it can never be ours. */
@@ -2934,23 +2869,18 @@ static size_t send_sigma2(const struct matter_case_sigma1 *s1, const uint8_t *ip
 	 */
 	{
 		struct matter_cert_info ci;
-		uint8_t derived[MATTER_CASE_PUBKEY_LEN];
 
-		if (ec_p256_pub_from_priv(f->op_priv, derived) == 0 &&
-		    matter_cert_parse(f->noc, f->noc_len, &ci) == MATTER_OK &&
+		if (matter_cert_parse(f->noc, f->noc_len, &ci) == MATTER_OK &&
 		    ci.have_public_key) {
-			LOG_INF("  signing key %s the NOC; noc %u B, icac %u B",
-				memcmp(derived, ci.public_key, sizeof(derived)) == 0
-					? "MATCHES"
-					: "does NOT match",
-				(unsigned int)f->noc_len, (unsigned int)f->icac_len);
+			TM_LOG_INF("  noc %u B, icac %u B", (unsigned int)f->noc_len,
+				   (unsigned int)f->icac_len);
 			/* Kept so the Sigma2 signature can be verified against
 			 * the certificate it ships with. */
 			memcpy(s_case.noc_pub, ci.public_key, sizeof(s_case.noc_pub));
 			s_case.have_noc_pub = true;
 		} else {
 			s_case.have_noc_pub = false;
-			LOG_WRN("  could not check the signing key against the NOC");
+			TM_LOG_WRN("  could not check the signing key against the NOC");
 		}
 	}
 
@@ -3001,7 +2931,7 @@ static size_t send_sigma2(const struct matter_case_sigma1 *s1, const uint8_t *ip
 	 */
 	if (s_case_counter == 0u) {
 		if (tm_random((uint8_t *)&s_case_counter, sizeof(s_case_counter)) != 0) {
-			LOG_ERR("  no entropy for the message counter");
+			TM_LOG_ERR("  no entropy for the message counter");
 			return 0u;
 		}
 		s_case_counter &= 0x0FFFFFFFu; /* leave room to increment */
@@ -3018,7 +2948,7 @@ static size_t send_sigma2(const struct matter_case_sigma1 *s1, const uint8_t *ip
 	mh.dest_group_id = 0u;
 	rc = matter_msg_header_encode(&mh, reply, cap, &mh_len);
 	if (rc != MATTER_OK) {
-		LOG_ERR("  cannot frame Sigma2 (%d)", rc);
+		TM_LOG_ERR("  cannot frame Sigma2 (%d)", rc);
 		return 0u;
 	}
 
@@ -3037,7 +2967,7 @@ static size_t send_sigma2(const struct matter_case_sigma1 *s1, const uint8_t *ip
 	ph.ack_counter = req_mh->message_counter;
 	rc = matter_proto_header_encode(&ph, reply + mh_len, cap - mh_len, &ph_len);
 	if (rc != MATTER_OK) {
-		LOG_ERR("  cannot frame Sigma2 protocol header (%d)", rc);
+		TM_LOG_ERR("  cannot frame Sigma2 protocol header (%d)", rc);
 		return 0u;
 	}
 
@@ -3049,12 +2979,12 @@ static size_t send_sigma2(const struct matter_case_sigma1 *s1, const uint8_t *ip
 		 * what the peer's transcript already covers.
 		 */
 		if (s_case.sigma2_len > cap - mh_len - ph_len) {
-			LOG_ERR("  no room to resend Sigma2");
+			TM_LOG_ERR("  no room to resend Sigma2");
 			return 0u;
 		}
 		memcpy(reply + mh_len + ph_len, s_case.sigma2, s_case.sigma2_len);
 		memset(transcript, 0, sizeof(transcript));
-		LOG_DBG("  Sigma1 again -- resending the SAME Sigma2 (%u B, session 0x%04x)",
+		TM_LOG_DBG("  Sigma1 again -- resending the SAME Sigma2 (%u B, session 0x%04x)",
 			(unsigned int)s_case.sigma2_len, (unsigned int)s_case.local_session_id);
 		return mh_len + ph_len + s_case.sigma2_len;
 	}
@@ -3066,7 +2996,7 @@ static size_t send_sigma2(const struct matter_case_sigma1 *s1, const uint8_t *ip
 		/* MATTER_E_STATE here now means the signature did not verify
 		 * against the NOC's own public key, which is a far more specific
 		 * thing than "could not be built". */
-		LOG_ERR("  Sigma2 NOT built (%d)%s", rc,
+		TM_LOG_ERR("  Sigma2 NOT built (%d)%s", rc,
 			rc == MATTER_E_STATE ? " -- crypto step failed (sign/verify/ECDH)" : "");
 		return 0u;
 	}
@@ -3092,8 +3022,8 @@ static size_t send_sigma2(const struct matter_case_sigma1 *s1, const uint8_t *ip
 	 * question no amount of staring at the encoder answers -- and far
 	 * cheaper than another pairing attempt.
 	 */
-	LOG_HEXDUMP_DBG(reply + mh_len + ph_len, s2_len < 48u ? s2_len : 48u, "sigma2 head");
-	LOG_DBG("  Sigma2 out: %u B payload, %u B total, session 0x%04x", (unsigned int)s2_len,
+	TM_LOG_HEXDUMP_DBG(reply + mh_len + ph_len, s2_len < 48u ? s2_len : 48u, "sigma2 head");
+	TM_LOG_DBG("  Sigma2 out: %u B payload, %u B total, session 0x%04x", (unsigned int)s2_len,
 		(unsigned int)(mh_len + ph_len + s2_len), (unsigned int)s_case.local_session_id);
 	return mh_len + ph_len + s2_len;
 }
@@ -3124,7 +3054,7 @@ static size_t handle_sigma3(const uint8_t *sigma3, size_t sigma3_len, const uint
 	int rc;
 
 	if (!s_case.active) {
-		LOG_WRN("  Sigma3 with no handshake in progress");
+		TM_LOG_WRN("  Sigma3 with no handshake in progress");
 		return 0u;
 	}
 	/*
@@ -3138,7 +3068,7 @@ static size_t handle_sigma3(const uint8_t *sigma3, size_t sigma3_len, const uint
 	 * administrator's session being live says nothing about whether this
 	 * Sigma3 has already been answered. */
 	if (case_slot_of(s_case.local_session_id) < MATTER_CASE_SESSIONS) {
-		LOG_DBG("  Sigma3 again -- resending the StatusReport");
+		TM_LOG_DBG("  Sigma3 again -- resending the StatusReport");
 		return case_status_report(req, req_mh, reply, cap);
 	}
 
@@ -3163,11 +3093,11 @@ static size_t handle_sigma3(const uint8_t *sigma3, size_t sigma3_len, const uint
 		 * diverged, a failed signature means it did NOT and the identity
 		 * is the problem. Both return MATTER_E_TYPE, so this only
 		 * narrows it -- but it narrows it to two. */
-		LOG_ERR("  Sigma3 REJECTED (%d)%s", rc,
+		TM_LOG_ERR("  Sigma3 REJECTED (%d)%s", rc,
 			rc == MATTER_E_TYPE ? " -- AEAD tag or signature failed" : "");
 		return 0u;
 	}
-	LOG_INF("  Sigma3 VERIFIED: peer node 0x%08x%08x", (unsigned int)(peer.node_id >> 32),
+	TM_LOG_INF("  Sigma3 VERIFIED: peer node 0x%08x%08x", (unsigned int)(peer.node_id >> 32),
 		(unsigned int)peer.node_id);
 
 	/*
@@ -3176,7 +3106,7 @@ static size_t handle_sigma3(const uint8_t *sigma3, size_t sigma3_len, const uint
 	 * same phone also belongs to.
 	 */
 	if (s_case.fabric == NULL || peer.fabric_id != s_case.fabric->fabric_id) {
-		LOG_ERR("  Sigma3 names a different fabric -- refusing");
+		TM_LOG_ERR("  Sigma3 names a different fabric -- refusing");
 		return 0u;
 	}
 
@@ -3190,7 +3120,7 @@ static size_t handle_sigma3(const uint8_t *sigma3, size_t sigma3_len, const uint
 	memset(salt, 0, sizeof(salt));
 	memset(digest, 0, sizeof(digest));
 	if (rc != MATTER_OK) {
-		LOG_ERR("  session keys NOT derived (%d)", rc);
+		TM_LOG_ERR("  session keys NOT derived (%d)", rc);
 		return 0u;
 	}
 
@@ -3207,7 +3137,7 @@ static size_t handle_sigma3(const uint8_t *sigma3, size_t sigma3_len, const uint
 		 * UNSECURED counter and is on the wire in clear text, so seeding
 		 * from it would let a listener predict this session's. */
 		if (tm_random((uint8_t *)&seed, sizeof(seed)) != 0) {
-			LOG_ERR("  no entropy for the session counter");
+			TM_LOG_ERR("  no entropy for the session counter");
 			memset(&keys, 0, sizeof(keys));
 			return 0u;
 		}
@@ -3232,7 +3162,7 @@ static size_t handle_sigma3(const uint8_t *sigma3, size_t sigma3_len, const uint
 	}
 	memset(&keys, 0, sizeof(keys));
 	if (rc != MATTER_OK) {
-		LOG_ERR("  CASE session NOT installed (%d)", rc);
+		TM_LOG_ERR("  CASE session NOT installed (%d)", rc);
 		return 0u;
 	}
 	s_case_ready[slot] = true;
@@ -3243,10 +3173,10 @@ static size_t handle_sigma3(const uint8_t *sigma3, size_t sigma3_len, const uint
 	 * the node id. Print them: a peer denied ADMINISTER while presenting no
 	 * tags is a different bug from one denied while presenting them. */
 	if (peer.n_cats == 0u) {
-		LOG_INF("  CASE peer presents no CASE Authenticated Tags");
+		TM_LOG_INF("  CASE peer presents no CASE Authenticated Tags");
 	} else {
 		for (uint8_t i = 0u; i < peer.n_cats; i++) {
-			LOG_INF("  CASE peer CAT id 0x%04x version %u",
+			TM_LOG_INF("  CASE peer CAT id 0x%04x version %u",
 				(unsigned)(peer.cats[i] >> 16), (unsigned)(peer.cats[i] & 0xFFFFu));
 		}
 	}
@@ -3261,7 +3191,7 @@ static size_t handle_sigma3(const uint8_t *sigma3, size_t sigma3_len, const uint
 	 */
 	matter_commission_readvertise();
 
-	LOG_INF("  CASE ESTABLISHED: local session 0x%04x, peer 0x%04x",
+	TM_LOG_INF("  CASE ESTABLISHED: local session 0x%04x, peer 0x%04x",
 		(unsigned int)s_case.local_session_id, (unsigned int)s_case.peer_session_id);
 
 	/*
@@ -3316,7 +3246,7 @@ static size_t case_status_report(const struct matter_proto_header *req,
 				    cap - mh_len - ph_len, &sr_len) != MATTER_OK) {
 		return 0u;
 	}
-	LOG_DBG("  StatusReport success out: %u B total", (unsigned int)(mh_len + ph_len + sr_len));
+	TM_LOG_DBG("  StatusReport success out: %u B total", (unsigned int)(mh_len + ph_len + sr_len));
 	return mh_len + ph_len + sr_len;
 }
 
@@ -3346,7 +3276,7 @@ static size_t matter_thread_on_datagram_owned(uint8_t *msg, size_t len, uint8_t 
 
 	rc = matter_msg_header_decode(msg, len, &mh, &mh_len);
 	if (rc != MATTER_OK) {
-		LOG_WRN("  not a Matter message (%d)", rc);
+		TM_LOG_WRN("  not a Matter message (%d)", rc);
 		return 0u;
 	}
 
@@ -3389,7 +3319,7 @@ static size_t matter_thread_on_datagram_owned(uint8_t *msg, size_t len, uint8_t 
 				s_thread_reply = NULL;
 				return s_thread_reply_len;
 			}
-			LOG_WRN("  encrypted for session 0x%04x, which is not ours",
+			TM_LOG_WRN("  encrypted for session 0x%04x, which is not ours",
 				(unsigned int)mh.session_id);
 			return 0u;
 		}
@@ -3405,7 +3335,7 @@ static size_t matter_thread_on_datagram_owned(uint8_t *msg, size_t len, uint8_t 
 
 		rc = matter_exchange_recv_in_place(&s_case_x[slot], msg, len, &in);
 		if (rc == MATTER_E_DUP) {
-			LOG_DBG("  DUP exchange 0x%04x counter %u; replaying the answer",
+			TM_LOG_DBG("  DUP exchange 0x%04x counter %u; replaying the answer",
 				(unsigned int)in.exchange_id, (unsigned int)in.message_counter);
 			/* I clear on a duplicate means it closes an exchange
 			 * this node opened; recv_impl() re-armed the pending
@@ -3416,10 +3346,10 @@ static size_t matter_thread_on_datagram_owned(uint8_t *msg, size_t len, uint8_t 
 				(void)send_standalone_ack(&s_case_x[slot]);
 			}
 		} else if (rc != MATTER_OK) {
-			LOG_WRN("  CASE message refused (%d)", rc);
+			TM_LOG_WRN("  CASE message refused (%d)", rc);
 			s_thread_reply_len = 0u;
 		} else {
-			LOG_DBG("  CASE in: protocol 0x%04x opcode 0x%02x, %u B, "
+			TM_LOG_DBG("  CASE in: protocol 0x%04x opcode 0x%02x, %u B, "
 				"exchange 0x%04x counter %u",
 				(unsigned int)in.protocol_id, in.opcode,
 				(unsigned int)in.payload_len, (unsigned int)in.exchange_id,
@@ -3445,7 +3375,7 @@ static size_t matter_thread_on_datagram_owned(uint8_t *msg, size_t len, uint8_t 
 
 	rc = matter_proto_header_decode(msg + mh_len, len - mh_len, &ph, &ph_len);
 	if (rc != MATTER_OK) {
-		LOG_WRN("  no protocol header (%d)", rc);
+		TM_LOG_WRN("  no protocol header (%d)", rc);
 		return 0u;
 	}
 	/*
@@ -3453,14 +3383,14 @@ static size_t matter_thread_on_datagram_owned(uint8_t *msg, size_t len, uint8_t 
 	 * that is rejected without a word back looks identical whether the TLV
 	 * is wrong or the framing is, and only one of those is visible here.
 	 */
-	LOG_DBG("  protocol 0x%04x opcode 0x%02x exchange 0x%04x", (unsigned int)ph.protocol_id,
+	TM_LOG_DBG("  protocol 0x%04x opcode 0x%02x exchange 0x%04x", (unsigned int)ph.protocol_id,
 		ph.opcode, (unsigned int)ph.exchange_id);
 	/* Demoted now that the addressing is proven: three lines per datagram
 	 * fills the 4 KB trace ring inside one handshake, and a full ring looks
 	 * exactly like a board that logged nothing. */
-	LOG_DBG("  in hdr: flags 0x%02x sec 0x%02x ctr %u exflags 0x%02x", mh.flags,
+	TM_LOG_DBG("  in hdr: flags 0x%02x sec 0x%02x ctr %u exflags 0x%02x", mh.flags,
 		mh.security_flags, (unsigned int)mh.message_counter, ph.exchange_flags);
-	LOG_DBG("  in hdr: source node 0x%08x%08x", (unsigned int)(mh.source_node_id >> 32),
+	TM_LOG_DBG("  in hdr: source node 0x%08x%08x", (unsigned int)(mh.source_node_id >> 32),
 		(unsigned int)mh.source_node_id);
 
 	/*
@@ -3517,18 +3447,18 @@ static size_t matter_thread_on_datagram_owned(uint8_t *msg, size_t len, uint8_t 
 		 * nothing logged in 15 s -- this branch was eating the
 		 * evidence either way.
 		 */
-		LOG_INF("  unsecured drop: protocol 0x%04x opcode 0x%02x exchange 0x%04x ack%s",
+		TM_LOG_INF("  unsecured drop: protocol 0x%04x opcode 0x%02x exchange 0x%04x ack%s",
 			(unsigned int)ph.protocol_id, ph.opcode, (unsigned int)ph.exchange_id,
 			(ph.exchange_flags & MATTER_EX_FLAG_A) ? "+" : "-");
 		if (len > mh_len + ph_len) {
-			LOG_HEXDUMP_INF(msg + mh_len + ph_len,
-					MIN(len - mh_len - ph_len, 16u), "  payload");
+			TM_LOG_HEXDUMP_INF(msg + mh_len + ph_len,
+					TM_MIN(len - mh_len - ph_len, 16u), "  payload");
 		}
 		return 0u;
 	}
 
 	if (!matter_commission_has_fabric()) {
-		LOG_WRN("  no fabric to match it against");
+		TM_LOG_WRN("  no fabric to match it against");
 		return 0u;
 	}
 	/*
@@ -3538,13 +3468,13 @@ static size_t matter_thread_on_datagram_owned(uint8_t *msg, size_t len, uint8_t 
 	 */
 	if (ph.opcode == MATTER_OP_CASE_SIGMA3) {
 		if (s_case.fabric == NULL) {
-			LOG_WRN("  Sigma3 with no fabric chosen");
+			TM_LOG_WRN("  Sigma3 with no fabric chosen");
 			return 0u;
 		}
 		if (matter_fabric_compressed_id(s_case.fabric->root_public_key,
 						s_case.fabric->fabric_id, cfid) != MATTER_OK ||
 		    matter_case_operational_ipk(s_case.fabric->ipk, cfid, ipk) != MATTER_OK) {
-			LOG_ERR("  could not derive the operational key");
+			TM_LOG_ERR("  could not derive the operational key");
 			return 0u;
 		}
 	}
@@ -3554,12 +3484,12 @@ static size_t matter_thread_on_datagram_owned(uint8_t *msg, size_t len, uint8_t 
 	 * and the peer would drop it exactly as it dropped the ones before this.
 	 */
 	if ((mh.flags & MATTER_MSG_FLAG_S) == 0u) {
-		LOG_WRN("  no source node id -- cannot address a reply");
+		TM_LOG_WRN("  no source node id -- cannot address a reply");
 		return 0u;
 	}
 
 	if (ph.opcode == MATTER_OP_CASE_SIGMA3) {
-		LOG_DBG("  lengths: msg %u = hdr %u + proto %u + payload %u", (unsigned int)len,
+		TM_LOG_DBG("  lengths: msg %u = hdr %u + proto %u + payload %u", (unsigned int)len,
 			(unsigned int)mh_len, (unsigned int)ph_len,
 			(unsigned int)(len - mh_len - ph_len));
 		return handle_sigma3(msg + mh_len + ph_len, len - mh_len - ph_len, ipk, &ph, &mh,
@@ -3568,10 +3498,10 @@ static size_t matter_thread_on_datagram_owned(uint8_t *msg, size_t len, uint8_t 
 
 	rc = matter_case_sigma1_decode(msg + mh_len + ph_len, len - mh_len - ph_len, &s1);
 	if (rc != MATTER_OK) {
-		LOG_WRN("  Sigma1 unreadable (%d)", rc);
+		TM_LOG_WRN("  Sigma1 unreadable (%d)", rc);
 		return 0u;
 	}
-	LOG_INF("  Sigma1: initiator session 0x%04x, resumption %s",
+	TM_LOG_INF("  Sigma1: initiator session 0x%04x, resumption %s",
 		(unsigned int)s1.initiator_session_id, s1.has_resumption ? "offered" : "none");
 	/*
 	 * The transcript hash is over the Sigma1 payload and nothing else, so
@@ -3581,7 +3511,7 @@ static size_t matter_thread_on_datagram_owned(uint8_t *msg, size_t len, uint8_t 
 	 * the peer never computed. That failure is completely silent, and this
 	 * is the only place it is visible.
 	 */
-	LOG_DBG("  lengths: msg %u = hdr %u + proto %u + payload %u", (unsigned int)len,
+	TM_LOG_DBG("  lengths: msg %u = hdr %u + proto %u + payload %u", (unsigned int)len,
 		(unsigned int)mh_len, (unsigned int)ph_len, (unsigned int)(len - mh_len - ph_len));
 
 	/*
@@ -3604,7 +3534,7 @@ static size_t matter_thread_on_datagram_owned(uint8_t *msg, size_t len, uint8_t 
 		    matter_case_operational_ipk(f->ipk, cfid, ipk) != MATTER_OK ||
 		    matter_case_destination_id(ipk, s1.initiator_random, f->root_public_key,
 					       f->fabric_id, f->node_id, want) != MATTER_OK) {
-			LOG_ERR("  could not recompute the destination identifier");
+			TM_LOG_ERR("  could not recompute the destination identifier");
 			return 0u;
 		}
 		if (memcmp(want, s1.destination_id, sizeof(want)) == 0) {
@@ -3613,10 +3543,10 @@ static size_t matter_thread_on_datagram_owned(uint8_t *msg, size_t len, uint8_t 
 		}
 	}
 	if (s_case.fabric == NULL) {
-		LOG_WRN("  destination matches NO fabric this node holds");
+		TM_LOG_WRN("  destination matches NO fabric this node holds");
 		return 0u;
 	}
-	LOG_INF("  destination MATCHES fabric %u -- answering", s_case.fabric->index);
+	TM_LOG_INF("  destination MATCHES fabric %u -- answering", s_case.fabric->index);
 
 	return send_sigma2(&s1, ipk, msg + mh_len + ph_len, len - mh_len - ph_len, &ph, &mh, reply,
 			   cap);
@@ -3635,8 +3565,8 @@ size_t matter_thread_on_datagram(uint8_t *msg, size_t len, uint8_t *reply, size_
 	 * is safely represented by no reply to this attempt. The try-lock precedes
 	 * matter_thread_on_datagram_owned(), so this loss path has not parsed or
 	 * mutated an exchange, cursor, session, subscription, or fabric. */
-	if (k_mutex_lock(&s_owner_lock, K_NO_WAIT) != 0) {
-		LOG_DBG("  Matter owner busy; leaving UDP datagram for MRP retry");
+	if (!tm_trylock()) {
+		TM_LOG_DBG("  Matter owner busy; leaving UDP datagram for MRP retry");
 		return 0u;
 	}
 	s_thread_tx_token = 0u;
@@ -3652,7 +3582,7 @@ size_t matter_thread_on_datagram(uint8_t *msg, size_t len, uint8_t *reply, size_
 		 * staged length. This packet was never presented to the transport. */
 		tx_thread_finish(MATTER_E_STATE);
 	}
-	k_mutex_unlock(&s_owner_lock);
+	tm_unlock();
 	return reply_len;
 }
 
@@ -3675,16 +3605,16 @@ static void on_message_owned(uint8_t *msg, size_t len)
 	memset(s_info.accessing_cats, 0, sizeof(s_info.accessing_cats));
 
 	if (!s_verifier_ok) {
-		LOG_ERR("no usable SPAKE2P verifier; dropping %u bytes", (unsigned int)len);
+		TM_LOG_ERR("no usable SPAKE2P verifier; dropping %u bytes", (unsigned int)len);
 		return;
 	}
 	if (s_stale && begin_session() != 0) {
 		return;
 	}
 
-	LOG_DBG("on_message: %u B", (unsigned int)len);
+	TM_LOG_DBG("on_message: %u B", (unsigned int)len);
 	rc = matter_exchange_recv_in_place(&s_exchange, msg, len, &in);
-	LOG_DBG("exchange_recv rc=%d opcode=0x%02x payload=%u", rc, in.opcode,
+	TM_LOG_DBG("exchange_recv rc=%d opcode=0x%02x payload=%u", rc, in.opcode,
 		(unsigned int)in.payload_len);
 	if (rc == MATTER_E_DUP) {
 		/* The peer thinks its last message was lost. Acknowledge it
@@ -3698,7 +3628,7 @@ static void on_message_owned(uint8_t *msg, size_t len)
 		/* Name what was turned away. "refused 137 bytes (-4)" cost a whole
 		 * hardware round to interpret; the exchange id and the I flag are
 		 * what actually said which rule fired. */
-		LOG_WRN("refused %u B (%d): protocol 0x%04x opcode 0x%02x exchange 0x%04x %s",
+		TM_LOG_WRN("refused %u B (%d): protocol 0x%04x opcode 0x%02x exchange 0x%04x %s",
 			(unsigned int)len, rc, (unsigned int)in.protocol_id, in.opcode,
 			in.exchange_id, in.initiator ? "I" : "-");
 		return;
@@ -3724,20 +3654,20 @@ static void on_message_owned(uint8_t *msg, size_t len)
 	}
 
 	if (rc != MATTER_OK) {
-		LOG_WRN("PASE refused opcode 0x%02x (%d)", in.opcode, rc);
+		TM_LOG_WRN("PASE refused opcode 0x%02x (%d)", in.opcode, rc);
 		/* Terminal for this attempt; the next connection re-seeds. */
 		s_stale = true;
 		return;
 	}
 
-	LOG_INF("PASE rc=%d, reply opcode 0x%02x (%u B), state=%d", rc, pase_op,
+	TM_LOG_INF("PASE rc=%d, reply opcode 0x%02x (%u B), state=%d", rc, pase_op,
 		(unsigned int)pase_len, (int)matter_pase_responder_state(&s_pase));
 
 	if (matter_pase_responder_state(&s_pase) == MATTER_PASE_ST_DONE && !s_exchange.secure) {
 		uint32_t seed = 0u;
 
 		if (tm_random((uint8_t *)&seed, sizeof(seed)) != 0) {
-			LOG_ERR("CSPRNG failed; cannot open the secure session");
+			TM_LOG_ERR("CSPRNG failed; cannot open the secure session");
 			s_stale = true;
 			return;
 		}
@@ -3746,7 +3676,7 @@ static void on_message_owned(uint8_t *msg, size_t len)
 		rc = matter_exchange_promote(&s_exchange, s_pase.local_session_id,
 					     s_pase.peer_session_id, &s_pase.keys, seed);
 		if (rc != MATTER_OK) {
-			LOG_ERR("promote to secure session rc=%d", rc);
+			TM_LOG_ERR("promote to secure session rc=%d", rc);
 			s_stale = true;
 			return;
 		}
@@ -3756,7 +3686,7 @@ static void on_message_owned(uint8_t *msg, size_t len)
 		       sizeof(s_info.attestation_challenge));
 		s_info.have_challenge = true;
 
-		LOG_INF("PASE complete: secure session up (local 0x%04x, peer 0x%04x)",
+		TM_LOG_INF("PASE complete: secure session up (local 0x%04x, peer 0x%04x)",
 			(unsigned int)s_pase.local_session_id,
 			(unsigned int)s_pase.peer_session_id);
 	}
@@ -3764,9 +3694,9 @@ static void on_message_owned(uint8_t *msg, size_t len)
 
 static void on_message(uint8_t *msg, size_t len)
 {
-	k_mutex_lock(&s_owner_lock, K_FOREVER);
+	tm_lock();
 	on_message_owned(msg, len);
-	k_mutex_unlock(&s_owner_lock);
+	tm_unlock();
 }
 
 /** The link dropped. Cheap here; begin_session() does the real work later. */
@@ -3790,30 +3720,32 @@ static void on_link_reset_owned(void)
 
 static void on_link_reset(void)
 {
-	k_mutex_lock(&s_owner_lock, K_FOREVER);
+	tm_lock();
 	on_link_reset_owned();
-	k_mutex_unlock(&s_owner_lock);
+	tm_unlock();
 }
 
 bool matter_commission_has_fabric(void)
 {
-	return atomic_get(&s_has_fabric_snapshot) != 0;
+	return atomic_load(&s_has_fabric_snapshot) != 0;
 }
 
 
-int matter_commission_init(void)
+int matter_commission_init(const struct matter_commission_config *cfg)
 {
+	if (cfg == NULL || cfg->verifier_hex == NULL || cfg->salt_hex == NULL) {
+		return -EINVAL;
+	}
+	s_cfg = cfg;
 	s_info_defaults();
-	k_sem_init(&s_fab_done, 0u, 1u);
 	s_info.commissioning_hooks = &k_commissioning_hooks;
-	k_mutex_init(&s_owner_lock);
 	if (matter_tx_pool_init(&s_tx_pool, s_tx_slots, &s_tx_backing[0][0], MATTER_TX_SLOTS,
 				sizeof(s_tx_backing[0])) != MATTER_OK) {
-		LOG_ERR("cannot initialize owned Matter packet slots");
+		TM_LOG_ERR("cannot initialize owned Matter packet slots");
 		return -ENOMEM;
 	}
 	if (matter_im_read_pool_init(&s_read_pool, s_reads, MATTER_READ_SLOTS) != MATTER_OK) {
-		LOG_ERR("cannot initialize Matter Read cursors");
+		TM_LOG_ERR("cannot initialize Matter Read cursors");
 		return -ENOMEM;
 	}
 	if (load_verifier() != 0) {
@@ -3823,25 +3755,26 @@ int matter_commission_init(void)
 		s_verifier_ok = false;
 	} else {
 		s_verifier_ok = true;
-		LOG_INF("commissioning ready: discriminator 0x%03x, %u PBKDF iterations",
-			(unsigned int)CONFIG_TINYMATTER_DISCRIMINATOR,
-			(unsigned int)CONFIG_TINYMATTER_SPAKE2P_ITERATIONS);
+		TM_LOG_INF("commissioning ready: discriminator 0x%03x, %u PBKDF iterations",
+			(unsigned int)matter_ble_discriminator(),
+			(unsigned int)s_cfg->iterations);
 	}
 
 	/*
-	 * Stable per-board Matter identifier. Derived from the factory EUI-64
+	 * Stable per-board Matter identifier. Derived from tm_device_id()
 	 * rather than drawn from the RNG, because nothing on the Matter
 	 * side of this node is persisted yet (there is no settings handler in
 	 * the core at all) and a value regenerated at every boot would make
 	 * this look like a different device after each power cycle.
-	 * A domain-separated hash keeps the permanent EUI-64 itself off the wire.
+	 * A domain-separated hash keeps the permanent id itself off the wire.
 	 */
 	{
-		uint32_t id[2] = { NRF_FICR->DEVICEID[0], NRF_FICR->DEVICEID[1] };
+		uint8_t id[8];
 		struct tm_sha256 h;
 		uint8_t digest[TM_SHA256_LEN];
 		int serial_len;
 
+		tm_device_id(id);
 		tm_sha256_init(&h);
 		tm_sha256_update(&h, (const uint8_t *)"tinymatter-serial-id", 20u);
 		tm_sha256_update(&h, (const uint8_t *)id, sizeof(id));
@@ -3890,11 +3823,6 @@ int matter_commission_init(void)
 	{
 		int rc;
 
-#if IS_ENABLED(CONFIG_TINYMATTER_CLEAR_ON_BOOT)
-		/* Before the load, so nothing this boot ever sees the old
-		 * fabrics. */
-		(void)matter_fab_erase();
-#endif
 		rc = matter_fab_load(&s_info);
 		fabric_snapshot_refresh_owned();
 		/* With or without a fabric: see the note under sub_resume_for(). */
@@ -3903,7 +3831,7 @@ int matter_commission_init(void)
 		if (rc == 0) {
 			rc = matter_clusters_resume(&s_info);
 			if (rc != MATTER_OK) {
-				LOG_ERR("restored a fabric but could not rejoin Thread (%d); "
+				TM_LOG_ERR("restored a fabric but could not rejoin Thread (%d); "
 					"the accessory will read as unresponsive",
 					rc);
 			}
@@ -3914,8 +3842,31 @@ int matter_commission_init(void)
 			 */
 			matter_commission_readvertise();
 		} else if (rc > 0) {
-			LOG_INF("no stored fabric; commissionable");
+			TM_LOG_INF("no stored fabric; commissionable");
 		}
 	}
 	return 0;
+}
+
+void matter_commission_work(enum tm_work w)
+{
+	switch (w) {
+	case TM_WORK_ADMIN_EXPIRE:
+		admin_expire();
+		break;
+	case TM_WORK_FAILSAFE:
+		failsafe_work_fn();
+		break;
+	case TM_WORK_NOTIFY:
+		notify_work_fn();
+		break;
+	case TM_WORK_HEARTBEAT:
+		heartbeat_work_fn();
+		break;
+	case TM_WORK_THREAD_REAP:
+		tx_thread_reap_work_fn();
+		break;
+	default:
+		break;
+	}
 }

@@ -4,12 +4,9 @@
 #include <errno.h>
 #include <string.h>
 
-#include <zephyr/logging/log.h>
-
-#include "matter_fab_settings.h"
-#include "tm_kv.h"
-
-LOG_MODULE_REGISTER(matter_fab, CONFIG_LOG_DEFAULT_LEVEL);
+#include <tinymatter/matter_fab_store.h>
+#include <tinymatter/tm_kv.h>
+#include <tinymatter/tm_log.h>
 
 #define FAB_MAGIC   0x32424146u /* "FAB2", little endian. */
 #define FAB_VERSION 1u
@@ -427,25 +424,6 @@ static void clear_identity(struct matter_device_info *info)
 	info->have_thread_xpanid = false;
 }
 
-static void legacy_cleanup(void)
-{
-	static const uint16_t fixed[] = {
-		TM_KV_KEY_MATTER_FAB_OK,
-		TM_KV_KEY_MATTER_FAB_VER,
-		TM_KV_KEY_MATTER_FAB_TD,
-		TM_KV_KEY_MATTER_FAB_XP,
-		TM_KV_KEY_MATTER_FAB_ICLEN,
-		TM_KV_KEY_MATTER_FAB_ICAC,
-	};
-
-	for (size_t i = 0u; i < sizeof(fixed) / sizeof(fixed[0]); i++) {
-		(void)tm_kv_delete(fixed[i]);
-	}
-	for (uint8_t i = 0u; i < MATTER_SUPPORTED_FABRICS; i++) {
-		(void)tm_kv_delete(TM_KV_KEY_MATTER_FAB_SLOT0 + i);
-	}
-}
-
 int matter_fab_load(struct matter_device_info *info)
 {
 	bool used_index[MATTER_SUPPORTED_FABRICS + 1u] = { false };
@@ -474,7 +452,6 @@ int matter_fab_load(struct matter_device_info *info)
 	s_icac_state = 0u;
 	s_have_meta = false;
 	rc = load_meta_record();
-	legacy_cleanup();
 	if (rc != 0 || !s_have_meta) {
 		clear_identity(info);
 		return rc < 0 ? rc : 1;
@@ -633,8 +610,7 @@ int matter_fab_erase(void)
 	 * old epoch is live; after it lands every older record is unreachable. */
 	rc = ensure_meta();
 	if (rc == 0) {
-		legacy_cleanup();
-		LOG_WRN("Matter operational identity erased at epoch %u",
+		TM_LOG_WRN("Matter operational identity erased at epoch %u",
 			(unsigned int)s_epoch);
 	}
 	return rc;

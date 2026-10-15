@@ -1,29 +1,14 @@
 /* SPDX-License-Identifier: ISC */
 
 /*
- * tm_kv.h - small persistent values, addressed by number. The project this was
- * extracted from shares this seam across several ports; tinymatter carries the
- * Zephyr settings backend and the Matter key window only.
+ * tm_kv.h - small persistent values, addressed by number. The storage seam a
+ * port provides; ports/zephyr/tm_kv_zephyr.c puts it on Zephyr settings.
  *
- * WHAT THIS REPLACES, AND WHY THE KEY IS AN INTEGER. Each framework caps record
- * names differently -- ESP-IDF's NVS at 15 characters, Zephyr's settings at 64 --
- * and ESP-IDF's read side reports a too-long name as "never stored" rather than
- * as an error, which is how an 18-character namespace survived a rename, a test
- * suite and a release in the source project. Every port re-solved that
- * trap by hand, and PORTING.md carried a table of every spelled-out name to
- * police it.
- *
- * A uint16_t key cannot be too long. Backends derive their own storage name
- * from the number -- "uwl/%04x" under Zephyr settings, namespace "uwl" with key
- * "%04x" under NVS -- so both are bounded by construction, four hex digits, and
- * the cap can no longer be exceeded by anyone.
- *
- * Keys are grouped into windows by consumer, because a range is cheaper to
- * reason about than a registry and two consumers must never collide. Take an id
- * from the right window; do not invent a window without a consumer.
- *
- * Backend here: Zephyr settings (tm_kv_zephyr.c). The settings names keep the
- * source project's "uwl/" prefix so the on-flash layout is unchanged.
+ * WHY THE KEY IS AN INTEGER. Each framework caps record names differently --
+ * ESP-IDF's NVS at 15 characters, Zephyr's settings at 64 -- and ESP-IDF's read
+ * side reports a too-long name as "never stored" rather than as an error. A
+ * uint16_t key cannot be too long: a backend derives its own storage name from
+ * the number ("tmk/%04x" under Zephyr settings), bounded by construction.
  *
  * NOT a filesystem and not a database. Small values that must survive a reset
  * and a firmware update -- keys, a provisioning blob, a handful of flags.
@@ -49,22 +34,12 @@ extern "C" {
 #define TM_KV_KEY_MATTER_LIMIT 0x2100u
 
 #define TM_KV_KEY_MATTER_SRP_HOST_ID 0x2000u
-/* Retired v0.3 fabric schema. Kept assigned so a clean-break loader can erase
- * it without ever mistaking it for current identity. */
-#define TM_KV_KEY_MATTER_FAB_VER   0x2010u
-#define TM_KV_KEY_MATTER_FAB_OK    0x2011u
-#define TM_KV_KEY_MATTER_FAB_TD    0x2012u
-#define TM_KV_KEY_MATTER_FAB_XP    0x2013u
-#define TM_KV_KEY_MATTER_FAB_ICLEN 0x2014u
-#define TM_KV_KEY_MATTER_FAB_ICAC  0x2015u
-#define TM_KV_KEY_MATTER_FAB_SLOT0      0x2020u
-#define TM_KV_KEY_MATTER_FAB_SLOT_LIMIT 0x2030u
 
 #define TM_KV_KEY_MATTER_SUB_SLOT0      0x2040u
 #define TM_KV_KEY_MATTER_SUB_SLOT_LIMIT 0x2050u
 #define TM_KV_KEY_MATTER_DL_AUTO_RELOCK 0x2060u
 
-/* Current clean-break, per-record Matter identity schema. */
+/* The per-record Matter identity schema. */
 #define TM_KV_KEY_MATTER_MF2_META    0x2070u
 #define TM_KV_KEY_MATTER_MF2_NET     0x2071u
 #define TM_KV_KEY_MATTER_MF2_ICAC    0x2072u
@@ -81,9 +56,8 @@ extern "C" {
 /* A key no record can carry: erased flash reads as all ones. */
 #define TM_KV_KEY_NONE 0xffffu
 
-/* The largest single value. The source project sized it for its credential
- * provisioning blob (1052 bytes); here it only bounds the fabric store's
- * record buffer, which matter_fab_settings.c asserts fits. */
+/* The largest single value. It bounds the fabric store's record buffer, which
+ * matter_fab_store.c asserts fits. */
 #define TM_KV_VALUE_MAX 1088u
 
 enum tm_kv_result {

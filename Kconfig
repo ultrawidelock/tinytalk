@@ -40,6 +40,8 @@ config TINYMATTER_BLE
 	# dependency; this brings in the Zephyr-side adapter that carries it.
 	depends on BT_PERIPHERAL && OPENTHREAD
 	select TINYMATTER
+	# tm_device_id(), which seeds the serial number.
+	select HWINFO
 	default n
 	help
 	  Compile the 0xFFF6 service (C1 write, C2 indicate), the BTP glue
@@ -162,19 +164,5 @@ source "subsys/logging/Kconfig.template.log_config"
 module = TINYMATTER_THREAD
 module-str = matter_thread
 source "subsys/logging/Kconfig.template.log_config"
-
-config TINYMATTER_CLEAR_ON_BOOT
-	bool "Erase the stored Matter fabrics at boot"
-	default n
-	help
-	  Atomically advances the `mf2` identity epoch before it is read, so the
-	  board comes up with no fabric and advertises commissionable.
-
-	  Preferred over `west flash --erase` because it clears everything a
-	  controller can see while leaving OpenThread's own settings alone, so
-	  the board rejoins its Thread network instead of being commissioned
-	  onto one.
-
-	  It erases on EVERY boot. Flash it once, then flash an image without it.
 
 endif # TINYMATTER_BLE

@@ -13,7 +13,7 @@
  *
  * From there the commissioner drives it: PASE over BLE, the fabric added over
  * CASE, then the Thread attach and the SRP registration, both done by the node
- * and ports/zephyr/thread when CONFIG_TINYMATTER_THREAD=y.
+ * and ports/zephyr/thread.
  *
  * The Door Lock cluster drives LED0: on while unlocked. Button 0: a short
  * press opens a basic commissioning window for WINDOW_S seconds; a press held
@@ -30,15 +30,23 @@
 #include <psa/crypto.h>
 
 #include <tinymatter/matter_clusters.h>
+#include <tinymatter/matter_commission.h>
+#include <tinymatter/matter_fab_store.h>
 
 #include "matter_ble_zephyr.h"
-#include "matter_commission.h"
-#include "matter_fab_settings.h"
 
 LOG_MODULE_REGISTER(door_lock, LOG_LEVEL_INF);
 
 #define WINDOW_S         900u
 #define FACTORY_RESET_MS 5000
+
+static const struct matter_commission_config s_matter_cfg = {
+	.vendor_id = CONFIG_TINYMATTER_VENDOR_ID,
+	.product_id = CONFIG_TINYMATTER_PRODUCT_ID,
+	.verifier_hex = CONFIG_TINYMATTER_SPAKE2P_VERIFIER,
+	.salt_hex = CONFIG_TINYMATTER_SPAKE2P_SALT,
+	.iterations = CONFIG_TINYMATTER_SPAKE2P_ITERATIONS,
+};
 
 static const struct gpio_dt_spec s_led = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
 static const struct gpio_dt_spec s_button = GPIO_DT_SPEC_GET(DT_ALIAS(sw0), gpios);
@@ -192,7 +200,7 @@ int main(void)
 		LOG_ERR("Bluetooth did not start (%d)", rc);
 		return 0;
 	}
-	rc = matter_commission_init();
+	rc = matter_commission_init(&s_matter_cfg);
 	if (rc != 0) {
 		LOG_ERR("Matter node did not start (%d)", rc);
 		return 0;

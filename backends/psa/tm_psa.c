@@ -1,12 +1,12 @@
 /* SPDX-License-Identifier: ISC */
 
 /*
- * The P-256 and AES seams the core declares, on Arm PSA Crypto.
+ * The P-256, AES and randomness seams the core declares, on Arm PSA Crypto.
  *
- * The five public functions at the bottom are the wrappers the source
- * project's Zephyr app kept beside its Matter glue; the static helpers above
- * them are its PSA primitive provider, cut down to what those five and the AES
- * adapter call. psa_crypto_init() must have run before any of them is used.
+ * The public functions at the bottom are the wrappers the source project's
+ * Zephyr app kept beside its Matter glue; the static helpers above them are its
+ * PSA primitive provider, cut down to what those wrappers call.
+ * psa_crypto_init() must have run before any of them is used.
  */
 #include <errno.h>
 #include <stddef.h>
@@ -17,6 +17,7 @@
 #include <tinymatter/matter_attest.h>
 #include <tinymatter/matter_case.h>
 #include <tinymatter/matter_crypto.h>
+#include <tinymatter/tm_platform.h>
 
 #define TM_P256_SCALAR 32u
 #define TM_P256_POINT  65u
@@ -237,4 +238,10 @@ int crypto_aes_ecb_encrypt(const uint8_t *key, size_t key_bits, const uint8_t in
 	}
 
 	return aes_ecb_encrypt(key, key_bits, in, out) == 0 ? 0 : -EIO;
+}
+
+/* The CSPRNG tm_platform.h declares: PSA's, which psa_crypto_init() seeded. */
+int tm_random(void *out, size_t len)
+{
+	return psa_generate_random(out, len) == PSA_SUCCESS ? 0 : -EIO;
 }

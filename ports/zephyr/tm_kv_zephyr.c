@@ -4,7 +4,7 @@
  * tm_kv.h on Zephyr settings.
  *
  * The whole point of the seam is here, in one function: name_of(). A caller
- * hands over a uint16_t; this file spells it "uwl/%04x" -- eight characters,
+ * hands over a uint16_t; this file spells it "tmk/%04x" -- eight characters,
  * always, whatever the key -- and Zephyr's 64-character cap stops being
  * something anyone can exceed. There is no table of names to keep in step with
  * a document, because there are no names to get wrong.
@@ -27,9 +27,9 @@
 #include <zephyr/kernel.h>
 #include <zephyr/settings/settings.h>
 
-#include "tm_kv.h"
+#include <tinymatter/tm_kv.h>
 
-/* "uwl/" + four hex digits + NUL. Fixed width so every key costs the same and
+/* "tmk/" + four hex digits + NUL. Fixed width so every key costs the same and
  * none can be truncated by a backend cap. */
 #define KV_NAME_LEN 9u
 
@@ -38,7 +38,7 @@ static bool s_ready;
 
 static void name_of(uint16_t key, char out[KV_NAME_LEN])
 {
-	(void)snprintf(out, KV_NAME_LEN, "uwl/%04x", (unsigned)key);
+	(void)snprintf(out, KV_NAME_LEN, "tmk/%04x", (unsigned)key);
 }
 
 struct read_ctx {
@@ -193,7 +193,7 @@ struct erase_ctx {
 };
 
 /* "00a3" -> 0x00a3. Exactly four lowercase hex digits, because that is the only
- * shape name_of() produces; anything else under uwl/ is not ours to delete. */
+ * shape name_of() produces; anything else under tmk/ is not ours to delete. */
 static bool key_of(const char *name, uint16_t *out)
 {
 	uint16_t v = 0u;
@@ -258,7 +258,7 @@ int tm_kv_erase_all(void)
 		int scan;
 
 		k_mutex_lock(&s_kv_lock, K_FOREVER);
-		scan = settings_load_subtree_direct("uwl", collect_cb, &ctx);
+		scan = settings_load_subtree_direct("tmk", collect_cb, &ctx);
 		k_mutex_unlock(&s_kv_lock);
 		if (scan != 0) {
 			return TM_KV_IO;

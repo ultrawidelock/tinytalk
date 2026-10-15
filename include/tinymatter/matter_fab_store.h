@@ -1,16 +1,15 @@
 /* SPDX-License-Identifier: ISC */
 
 /*
- * matter_fab_settings — the operational identity, across a reboot.
+ * matter_fab_store: the operational identity, across a reboot, over the
+ * tm_kv.h store a port provides.
  *
- * The tinymatter core carries no storage seam on purpose (it is host-tested and has no
- * Zephyr in it), so the port owns this. Without it every reset silently
- * un-commissions the node: the fabric table is plain RAM, the node comes back
+ * Without it every reset silently un-commissions the node: the fabric table is plain RAM, the node comes back
  * advertising commissionable, Thread never starts because nothing replays the
  * dataset, and the Home app shows an accessory that is simply gone.
  */
-#ifndef MATTER_FAB_SETTINGS_H
-#define MATTER_FAB_SETTINGS_H
+#ifndef MATTER_FAB_STORE_H
+#define MATTER_FAB_STORE_H
 
 #include <tinymatter/matter_clusters.h>
 
@@ -79,4 +78,4 @@ int matter_dl_attr_load(struct matter_device_info *info);
  */
 int matter_dl_attr_erase(void);
 
-#endif /* MATTER_FAB_SETTINGS_H */
+#endif /* MATTER_FAB_STORE_H */

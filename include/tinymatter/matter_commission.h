@@ -1,35 +1,52 @@
 /* SPDX-License-Identifier: ISC */
 
 /**
- * @file matter_commission.h — start answering commissioning attempts.
+ * @file matter_commission.h: the node, what the application calls, and the
+ *        two hooks it provides.
  */
 #pragma once
 
 #include <stdbool.h>
 #include <stdint.h>
 
-#include <zephyr/sys/util.h>
-
 #include <tinymatter/matter_clusters.h>
+#include <tinymatter/tm_platform.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+/** Who this node is and how it is commissioned. */
+struct matter_commission_config {
+	uint16_t vendor_id;
+	uint16_t product_id;
+	/** SPAKE2+ verifier, hex: w0 (32 B) then L (65 B). From
+	 *  scripts/spake2p_verifier.py, with the salt and count below. */
+	const char *verifier_hex;
+	/** SPAKE2+ salt, hex, 16 to 32 bytes. */
+	const char *salt_hex;
+	/** PBKDF2 iterations the verifier was derived with. */
+	uint32_t iterations;
+};
+
 /**
- * Register the commissioning handlers on the 0xFFF6 transport.
+ * Register the commissioning handlers on the 0xFFF6 transport and restore any
+ * stored fabric.
  *
- * Call after bt_enable() and psa_crypto_init(). Nothing here touches the
- * radio: whether the board is discoverable as a commissionable node is decided
+ * Call once the BLE transport, storage and crypto are up. @p cfg must outlive
+ * the node. Nothing here touches the radio: whether the board is discoverable as a commissionable node is decided
  * by the application's advertising, which asks for the Matter payload while
  * this node holds no fabric -- see matter_commission_has_fabric() and
  * matter_commission_readvertise().
  *
- * @return 0, or -ENOMEM if a packet pool cannot be set up. A bad verifier is
- *         reported by log and refused per attempt rather than failing
- *         startup.
+ * @return 0, -EINVAL without a config, or -ENOMEM if a packet pool cannot be
+ *         set up. A bad verifier is reported by log and refused per attempt
+ *         rather than failing startup.
  */
-int matter_commission_init(void);
+int matter_commission_init(const struct matter_commission_config *cfg);
+
+/** Run one deferred work item; the port calls this for tm_work_schedule(). */
+void matter_commission_work(enum tm_work w);
 
 /**
  * Whether this node currently holds a commissioned Matter fabric.

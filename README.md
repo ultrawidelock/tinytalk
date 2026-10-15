@@ -4,8 +4,12 @@
 
 A from-scratch Matter accessory node in portable C11. Apple Home commissions it
 over BLE, and it runs over Thread. It is small enough for an nRF52833 (512 KB
-flash, 128 KB RAM). The core has no OS dependency; Zephyr with OpenThread is
-the first port. It is not a certified Matter stack.
+flash, 128 KB RAM). It is not a certified Matter stack.
+
+The whole node, sessions and commissioning included, is in `src/` and needs
+no OS, radio stack or crypto library. A port provides 48 functions: a lock,
+deferred work, a clock, storage, BLE and Thread transports, and the crypto
+(see PORTING.md). Zephyr with OpenThread is the first port, in `ports/zephyr/`.
 
 Extracted from ultrawidelock@d6e23761.
 
@@ -14,7 +18,7 @@ Extracted from ultrawidelock@d6e23761.
 connectedhomeip, the reference Matter SDK, does not fit a 512 KB / 128 KB part.
 tinymatter writes the node by hand instead: TLV, the message layer, MRP, BTP,
 PASE with SPAKE2+, CASE, the Interaction Model and a small set of clusters,
-with the crypto and the OS behind narrow seams (see PORTING.md).
+with everything platform-specific behind narrow seams.
 
 ## What it does
 
@@ -31,9 +35,11 @@ with the crypto and the OS behind narrow seams (see PORTING.md).
 What it does not do: Matter certification, Wi-Fi, OTA updates, groups, door
 lock users or credentials, acting as a controller.
 
-Hardware status: the behaviour above was developed and run on hardware in the
-source project. Builds from this repository have been compiled for both
-boards below and tested on the host, not yet run on hardware.
+Hardware status: the protocol code was developed and run on hardware in the
+source project, with a Door Lock that also carried Aliro, users and
+credentials. This repository's featureless Door Lock, its portable node layer
+and its builds have been compiled for both boards below and tested on the
+host, not yet run on hardware.
 
 ## Test credentials
 
@@ -48,12 +54,25 @@ The default setup code is the same for every device built from this tree:
 your own, run `scripts/spake2p_verifier.py --passcode <p>` and put its output
 in your configuration.
 
+## Layout
+
+```
+include/tinymatter/   the node's headers; tm_platform.h, tm_kv.h, matter_ble.h,
+                      matter_thread.h and the crypto headers are what a port provides
+src/                  the node, portable C11
+backends/             crypto: psa/ (P-256, AES, random), oberon/ and mbedtls/ (SPAKE2+)
+ports/zephyr/         platform, BLE transport, storage, Thread
+samples/door-lock/    the nRF52833 sample
+scripts/              SPAKE2+ verifier and pairing-code generator
+tests/host/           unit tests and the host port
+```
+
 ## Build and test
 
 ```
 make test     # host unit tests
 make asan     # the same tests under AddressSanitizer and UndefinedBehaviorSanitizer
-make seams    # the symbols the core expects a port or backend to provide
+make seams    # the 48 symbols the node expects a port to provide
 ```
 
 On a machine where `cc` or `nm` is not the compiler you want, pass both:
@@ -81,8 +100,8 @@ Measured 2026-10-16 from the linker's memory-region report, building
 
 | Board | Flash | RAM |
 |---|---|---|
-| decawave_dwm3001cdk | 345,784 B of 504 KB (67.00%) | 101,920 B of 128 KB (77.76%) |
-| nrf52833dk/nrf52833 | 340,912 B of 504 KB (66.06%) | 101,728 B of 128 KB (77.61%) |
+| decawave_dwm3001cdk | 345,196 B of 504 KB (66.89%) | 101,984 B of 128 KB (77.81%) |
+| nrf52833dk/nrf52833 | 340,328 B of 504 KB (65.94%) | 101,792 B of 128 KB (77.66%) |
 
 ## License
 

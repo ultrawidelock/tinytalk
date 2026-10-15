@@ -24,9 +24,15 @@ if(CONFIG_TINYMATTER)
     ${SRC}/matter_attest.c
     ${SRC}/matter_fabric.c
     ${SRC}/matter_case.c
+    ${SRC}/matter_commission.c
+    ${SRC}/matter_fab_store.c
     ${SRC}/tm_hash.c)
 
   zephyr_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
+
+  # The core's logs, on Zephyr's logger (include/tinymatter/tm_log.h).
+  zephyr_library_compile_definitions(TM_LOG_HEADER="tm_log_zephyr.h")
+  zephyr_library_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/ports/zephyr)
 
   # The crypto seams (see PORTING.md): P-256 and AES-ECB on PSA Crypto, and
   # SPAKE2+ on either nrf_oberon or Mbed TLS.
@@ -38,7 +44,7 @@ if(CONFIG_TINYMATTER)
     zephyr_library_sources(${CMAKE_CURRENT_SOURCE_DIR}/backends/mbedtls/tm_spake2p_mbedtls.c)
   endif()
 
-  # The Zephyr port: BLE transport, fabric store, node glue, Thread.
+  # The Zephyr port: platform, BLE transport, storage, Thread.
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ports/zephyr)
 
 endif(CONFIG_TINYMATTER)
