@@ -10,6 +10,7 @@ if(CONFIG_TINYMATTER_BLE)
   zephyr_library_named(tinymatter_zephyr)
   zephyr_library_sources(
     ${CMAKE_CURRENT_SOURCE_DIR}/matter_ble_zephyr.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/matter_commission.c
     ${CMAKE_CURRENT_SOURCE_DIR}/matter_fab_settings.c
     ${CMAKE_CURRENT_SOURCE_DIR}/tm_kv_zephyr.c)
 

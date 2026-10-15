@@ -818,7 +818,7 @@ int matter_case_sigma2_encode(const struct matter_case_sigma2_in *in, uint8_t *o
 	 * two of these are load-bearing for this node in particular.
 	 *
 	 * The idle interval matches the radio. This node is an rx-on MED
-	 * (apps/dwm3001cdk-lock/overlay-thread.conf), so the spec-default 500 ms is
+	 * (samples/door-lock/overlay-thread.conf), so the spec-default 500 ms is
 	 * honest; it was 3000 while the node was a sleepy end device, and the
 	 * value must follow the link mode. The SRP TXT record in
 	 * ports/zephyr/thread/matter_thread_port.c advertises the same pair.

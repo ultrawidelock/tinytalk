@@ -20,6 +20,21 @@ make seams    # the symbols the core expects a port or backend to provide
 On a machine where `cc` or `nm` is not the compiler you want, pass both:
 `make test CC=/usr/bin/clang NM="xcrun nm"`.
 
+## Sizes
+
+Measured 2026-10-16 from the linker's memory-region report, building
+`samples/door-lock` with nRF Connect SDK v3.3.0 and its default flash map
+(504 KB application partition), without `overlay-lto.conf`:
+
+| Board | Thread | Flash | RAM |
+|---|---|---|---|
+| decawave_dwm3001cdk | off | 220,648 B of 504 KB (42.75%) | 74,312 B of 128 KB (56.70%) |
+| decawave_dwm3001cdk | on | 368,232 B of 504 KB (71.35%) | 109,360 B of 128 KB (83.44%) |
+| nrf52833dk/nrf52833 | off | 220,940 B of 504 KB (42.81%) | 74,312 B of 128 KB (56.70%) |
+| nrf52833dk/nrf52833 | on | 363,372 B of 504 KB (70.41%) | 109,168 B of 128 KB (83.29%) |
+
+Thread on means `-DEXTRA_CONF_FILE=overlay-thread.conf`.
+
 ## Fuzzing
 
 `make fuzz` builds five libFuzzer targets from `tests/host/fuzz/` (TLV
