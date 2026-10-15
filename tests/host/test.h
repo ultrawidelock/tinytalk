@@ -64,10 +64,6 @@ void test_matter_fabric(void);
 void test_matter_addnoc(void);
 void test_matter_network(void);
 void test_matter_case(void);
-void test_matter_case_client(void);
-void test_matter_client_sm(void);
-void test_matter_im_client(void);
-void test_matter_binding(void);
 void test_matter_clusters(void);
 /* Only with the real curve; see the Makefile's SPAKE. */
 void test_spake2p_mbedtls(void);

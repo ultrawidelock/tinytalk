@@ -479,30 +479,9 @@ int matter_exchange_replay(struct matter_exchange *x, uint8_t *out, size_t cap,
 /*
  * ---------------------------------------------- this node as the INITIATOR ---
  *
- * Everything above assumes the session was opened by somebody else. The two
- * functions below are for the one case where it was not: a CASE session this
- * node started, so it could send a command to another node.
- *
- * matter_exchange_open_initiator() is compiled only into a client build (see
- * matter_clusters.h on MATTER_FEATURE_CLIENT); matter_exchange_ack_initiator()
- * is not guarded, because subscription reports ride initiator exchanges in
- * every image. That is why they are here rather than in
- * a file of their own: they need frame()'s neighbours -- the header encoders
- * and the seal -- and everything in this file is already about that.
- */
-/*
- * Defaulted here as well as in matter_clusters.h, rather than included from
- * there: the real definition comes from the compiler command line, and a
- * header whose declarations depend on which OTHER header was included first is
- * a link error waiting for an unlucky include order.
- */
-#ifndef MATTER_FEATURE_CLIENT
-#define MATTER_FEATURE_CLIENT 0
-#endif
-
-/*
- * Unguarded, unlike its neighbours below: the server's subscription reports
- * also ride exchanges this node opens, so every image needs this ack.
+ * Everything above assumes the exchange was opened by somebody else. The
+ * server's subscription reports ride exchanges this node opens, so it needs
+ * the ack below.
  */
 /**
  * Frame a standalone acknowledgement on an exchange this node OPENED.
@@ -521,34 +500,6 @@ int matter_exchange_replay(struct matter_exchange *x, uint8_t *out, size_t cap,
  */
 int matter_exchange_ack_initiator(struct matter_exchange *x, uint16_t exchange_id, uint8_t *out,
 				  size_t cap, size_t *out_len);
-
-#if MATTER_FEATURE_CLIENT
-
-/**
- * Adopt a secure session this node INITIATED.
- *
- * matter_exchange_promote() is the responder's version and deliberately leaves
- * the exchange CLOSED: a commissioner opens a new exchange on the secure
- * session and the first message arrives from the peer. An initiator has the
- * opposite problem -- the first message on the session is one it SENDS, and
- * frame() refuses to build a message on a closed exchange -- so this opens the
- * exchange with an id of this node's own choosing.
- *
- * MRP is on, because this session only exists over UDP; see struct
- * matter_exchange::mrp for why that is a property of the transport.
- *
- * @param exchange_id chosen by this node. Also recorded as the exchange this
- *        node will acknowledge on, which is what makes
- *        matter_exchange_ack_initiator() below able to name it.
- * @param entropy seeds a fresh session counter, as promote does.
- * @return MATTER_OK, or MATTER_E_INVAL.
- */
-int matter_exchange_open_initiator(struct matter_exchange *x, uint16_t local_id, uint16_t peer_id,
-				   uint16_t exchange_id, const struct matter_session_keys *keys,
-				   uint32_t entropy);
-
-
-#endif /* MATTER_FEATURE_CLIENT */
 
 #ifdef __cplusplus
 }

@@ -208,34 +208,6 @@ struct matter_case_sigma3_in {
 };
 
 /**
- * Rebuild the X.509 DER TBSCertificate a Matter certificate's signature covers.
- *
- * The TLV form is a re-encoding of an X.509 certificate; the signature it
- * carries is the X.509 one, over the DER. So the only way to check it is to
- * rebuild that DER byte for byte -- hashing the TLV verifies nothing, however
- * plausible the span looks.
- *
- * @param out        receives the DER; @p cap must allow roughly twice the
- *                   certificate's TLV length.
- * @param signature  set to the 64-byte signature inside @p cert, which is not
- *                   part of the TBS.
- * @return MATTER_OK, MATTER_E_TYPE for anything outside the Matter operational
- *         certificate profile, MATTER_E_NOSPACE if @p cap is too small.
- */
-int matter_case_cert_tbs(const uint8_t *cert, size_t len, uint8_t *out, size_t cap, size_t *out_len,
-			 const uint8_t **signature);
-
-/**
- * Verify a Matter certificate's signature under its issuer's public key.
- *
- * @param scratch  working room for the rebuilt DER; not read by the caller.
- * @return MATTER_OK, or MATTER_E_ACCESS when the signature does not check out.
- */
-int matter_case_cert_verify(const uint8_t *cert, size_t len,
-			    const uint8_t issuer_pub[MATTER_CASE_PUBKEY_LEN], uint8_t *scratch,
-			    size_t scratch_cap);
-
-/**
  * Open and check a Sigma3, the initiator's half of the same proof.
  *
  *   S3K      = HKDF(shared, salt = IPK || TranscriptHash(Sigma1 || Sigma2),

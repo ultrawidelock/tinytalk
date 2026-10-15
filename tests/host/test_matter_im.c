@@ -650,8 +650,8 @@ void test_matter_im(void)
 		 *
 		 * The reason this node exists. A controller finds this endpoint
 		 * in the root's PartsList, reads its DeviceTypeList to learn it
-		 * is a lock, and reads the Door Lock FeatureMap to decide
-		 * whether it may send SetAliroReaderConfig. A wrong answer to
+		 * is a lock, and reads the Door Lock FeatureMap to learn which
+		 * optional features it has. A wrong answer to
 		 * any one of those is not an error anywhere -- it is an
 		 * accessory tile with no controls, which is the exact symptom
 		 * this endpoint was added to fix, so each is asserted.
@@ -670,42 +670,11 @@ void test_matter_im(void)
 		T_OK("not a status", !sreps[0].is_status);
 		T_EQ("on the lock endpoint", sreps[0].endpoint, MATTER_ENDPOINT_LOCK);
 		/*
-		 * The two credential bits and User, and nothing else. User is not
-		 * aspiration: a real controller invokes GetUser during
-		 * commissioning and abandons the pairing when it is refused.
-		 * PIN, RFID, schedules and logging stay out -- claiming those
-		 * would commit this node to surfaces it has none of.
+		 * No feature bits. PIN, RFID, users, schedules and logging stay
+		 * out -- claiming those would commit this node to surfaces it has
+		 * none of.
 		 */
-		T_EQ("the three feature bits and only those", sreps[0].vu,
-		     MATTER_DL_FEATURE_ALIRO_PROVISIONING | MATTER_DL_FEATURE_ALIRO_BLE_UWB |
-			     MATTER_DL_FEATURE_USER);
-
-		/*
-		 * The verification key is NULL until SetAliroReaderConfig
-		 * arrives, and that null IS the answer: it is how a controller
-		 * knows this reader still needs an identity. Reporting zeros
-		 * would claim a key that cannot verify. 0x14 is the TLV null
-		 * element type; matter_tlv.h names the containers but not this.
-		 */
-		one.paths[0].attribute = MATTER_ATTR_DL_ALIRO_VERIFICATION_KEY;
-		T_EQ("verification key encodes",
-		     matter_im_report_data_encode(&srv, &one, out, sizeof(out), &len, &stats),
-		     MATTER_OK);
-		m = walk_report(out, len, sreps, &suppress, &revision);
-		T_EQ("one report", m, 1);
-		T_OK("not a status", !sreps[0].is_status);
-		T_EQ("unprovisioned reads as null", sreps[0].vtype, 0x14u);
-
-		/* The sub-identifier is NOT nullable: it names the reader group
-		 * this device belongs to, which it has before any controller
-		 * speaks to it. A null here would be a different bug. */
-		one.paths[0].attribute = MATTER_ATTR_DL_ALIRO_GROUP_SUB_ID;
-		T_EQ("sub-identifier encodes",
-		     matter_im_report_data_encode(&srv, &one, out, sizeof(out), &len, &stats),
-		     MATTER_OK);
-		m = walk_report(out, len, sreps, &suppress, &revision);
-		T_EQ("one report", m, 1);
-		T_OK("and it is not null", sreps[0].vtype != 0x14u);
+		T_EQ("no feature bits at all", sreps[0].vu, 0u);
 
 		/* A cluster wildcard on the lock expands to the same two
 		 * clusters has_cluster() answers for, no more. */
@@ -883,6 +852,13 @@ void test_matter_im(void)
 			info.fabrics[i].noc_len = MATTER_NOC_MAX;
 			memset(info.fabrics[i].noc, (int)(0x40u + i), MATTER_NOC_MAX);
 		}
+		/* Three fabrics of maximum-size NOCs fit one report. The shared
+		 * ICAC, at its maximum on one of them, is what makes the list
+		 * outgrow it. */
+		info.fabrics[0].icac_len = MATTER_CERT_MAX;
+		info.icac.owner_index = 1u;
+		info.icac.len = MATTER_CERT_MAX;
+		memset(info.icac.buf, 0x30, MATTER_CERT_MAX);
 		matter_clusters_init(&srv, &info);
 		nocs.n_paths = 1u;
 		nocs.paths[0].endpoint = MATTER_ENDPOINT_ROOT;
@@ -1404,62 +1380,6 @@ void test_matter_im_invoke(void)
 		     MATTER_REGULATORY_INDOOR);
 	}
 
-	/*
-	 * GetUser on the lock endpoint, which is where a real pairing stops.
-	 * Apple invokes it during commissioning and sends RemoveFabric if it
-	 * does not get an answer it can use, so what matters is not that the
-	 * command is accepted but that the RESPONSE decodes and names the right
-	 * path -- a response built for the wrong endpoint or under the invoked
-	 * command's id looks like silence to the controller.
-	 */
-	t_group("GetUser answers with an empty slot");
-	{
-		uint8_t fields[16];
-		struct matter_tlv_writer fw;
-		size_t flen = 0u;
-
-		matter_tlv_writer_init(&fw, fields, sizeof(fields));
-		(void)matter_tlv_start_container(&fw, MATTER_TLV_ANON, MATTER_TLV_STRUCTURE);
-		(void)matter_tlv_put_u64(&fw, MATTER_TLV_CTX(0), 1u); /* UserIndex */
-		(void)matter_tlv_end_container(&fw);
-		T_EQ("fields encode", matter_tlv_writer_finish(&fw, &flen), MATTER_OK);
-
-		memset(&inv, 0, sizeof(inv));
-		inv.endpoint = MATTER_ENDPOINT_LOCK;
-		inv.cluster = MATTER_CLUSTER_DOOR_LOCK;
-		inv.command = MATTER_CMD_DL_GET_USER;
-		inv.fields = fields;
-		inv.fields_len = flen;
-		inv.has_fields = true;
-
-		T_EQ("encodes a response",
-		     matter_im_invoke_response_encode(&srv, &inv, out, sizeof(out), &len),
-		     MATTER_OK);
-		T_OK("response is not empty", len > 0u);
-		T_OK("response decodes", walk_invoke_response(out, len, &ir));
-		T_OK("carries a command, not a status", !ir.is_status);
-		T_EQ("on the lock endpoint", ir.endpoint, (long)MATTER_ENDPOINT_LOCK);
-		T_EQ("Door Lock", (long)ir.cluster, (long)MATTER_CLUSTER_DOOR_LOCK);
-		/* The path names GetUserResponse, not the GetUser that was
-		 * invoked. A controller matches on this. */
-		T_EQ("GetUserResponse", (long)ir.command, (long)MATTER_CMD_DL_GET_USER_RESPONSE);
-
-		/* An index outside the table is refused rather than answered
-		 * with an empty slot that implies the slot exists. */
-		matter_tlv_writer_init(&fw, fields, sizeof(fields));
-		(void)matter_tlv_start_container(&fw, MATTER_TLV_ANON, MATTER_TLV_STRUCTURE);
-		(void)matter_tlv_put_u64(&fw, MATTER_TLV_CTX(0), MATTER_DL_USERS_MAX + 1u);
-		(void)matter_tlv_end_container(&fw);
-		T_EQ("fields encode", matter_tlv_writer_finish(&fw, &flen), MATTER_OK);
-		inv.fields_len = flen;
-		T_EQ("out-of-range encodes",
-		     matter_im_invoke_response_encode(&srv, &inv, out, sizeof(out), &len),
-		     MATTER_OK);
-		T_OK("response decodes", walk_invoke_response(out, len, &ir));
-		T_OK("and it is a status", ir.is_status);
-		T_EQ("invalid command", ir.status, (long)MATTER_IM_STATUS_INVALID_COMMAND);
-	}
-
 	t_group("commands this node does not have");
 	{
 		uint8_t buf[64];
@@ -1666,8 +1586,8 @@ static size_t build_write(uint8_t *buf, size_t cap, unsigned int n_requests, boo
  * what this node used to answer RESOURCE_EXHAUSTED because it counted blocks
  * and called anything past the first a batch.
  *
- * Each member is a one-field structure, standing in for the ACL entries and
- * binding targets whose real shapes belong to the cluster, not to this layer.
+ * Each member is a one-field structure, standing in for the ACL entries whose
+ * real shapes belong to the cluster, not to this layer.
  */
 static size_t build_chunked_write(uint8_t *buf, size_t cap, unsigned int n_seed,
 				  unsigned int n_append, bool appends_match)
@@ -2206,22 +2126,20 @@ void test_matter_im_events(void)
 		T_OK("and the numbers never repeat", info.events[1].number > info.events[0].number);
 	}
 
-	t_group("a walk-up is credential-sourced and belongs to no fabric");
+	t_group("a change no controller asked for belongs to no fabric");
 	{
 		fill_info(&info);
 		matter_clusters_init(&srv, &info);
 
 		matter_clusters_record_lock_operation(&info, MATTER_DL_LOCK_OP_UNLOCK,
-						      MATTER_DL_OP_SOURCE_ALIRO, 0u, 0u);
+						      MATTER_DL_OP_SOURCE_UNSPECIFIED, 0u, 0u);
 		T_EQ("recorded", (long)matter_clusters_event_count(&info), 1L);
-		T_EQ("the credential source", (long)info.events[0].source,
-		     (long)MATTER_DL_OP_SOURCE_ALIRO);
 		T_EQ("no fabric", (long)info.events[0].fabric_index, 0L);
 
 		/* A node id offered without a fabric is dropped rather than
 		 * reported: it would name a controller that did not ask. */
 		matter_clusters_record_lock_operation(&info, MATTER_DL_LOCK_OP_LOCK,
-						      MATTER_DL_OP_SOURCE_ALIRO, 0u,
+						      MATTER_DL_OP_SOURCE_UNSPECIFIED, 0u,
 						      0x1122334455667788ULL);
 		T_EQ("a node id without a fabric is not kept", (long)info.events[1].source_node,
 		     0L);
@@ -2236,7 +2154,7 @@ void test_matter_im_events(void)
 
 		for (i = 0u; i < MATTER_EVENTS_MAX + 2u; i++) {
 			matter_clusters_record_lock_operation(&info, MATTER_DL_LOCK_OP_UNLOCK,
-							      MATTER_DL_OP_SOURCE_ALIRO, 0u, 0u);
+							      MATTER_DL_OP_SOURCE_UNSPECIFIED, 0u, 0u);
 		}
 		T_EQ("it never grows past its bound", (long)matter_clusters_event_count(&info),
 		     (long)MATTER_EVENTS_MAX);
@@ -2250,7 +2168,7 @@ void test_matter_im_events(void)
 		fill_info(&info);
 		matter_clusters_init(&srv, &info);
 		matter_clusters_record_lock_operation(&info, MATTER_DL_LOCK_OP_UNLOCK,
-						      MATTER_DL_OP_SOURCE_ALIRO, 0u, 0u);
+						      MATTER_DL_OP_SOURCE_UNSPECIFIED, 0u, 0u);
 
 		/* A request naming NO event path gets no EventReports array at
 		 * all -- which is what keeps every commissioning read byte-for-
@@ -2277,72 +2195,14 @@ void test_matter_im_events(void)
 		T_EQ("and the operation it recorded", (long)op, (long)MATTER_DL_LOCK_OP_UNLOCK);
 	}
 
-#if MATTER_FEATURE_DL_ALARMS
-	t_group("a forced door is recorded as an alarm, in the same ring");
-	{
-		fill_info(&info);
-		matter_clusters_init(&srv, &info);
-
-		matter_clusters_record_alarm(&info, MATTER_DL_ALARM_DOOR_FORCED_OPEN);
-		T_EQ("recorded", (long)matter_clusters_event_count(&info), 1L);
-		T_EQ("as the alarm event", (long)info.events[0].event_id,
-		     (long)MATTER_EVENT_DL_ALARM);
-		T_EQ("carrying DoorForcedOpen", (long)info.events[0].alarm_code,
-		     (long)MATTER_DL_ALARM_DOOR_FORCED_OPEN);
-
-		/* One ring for both events, because EventNumbers are ONE
-		 * ascending sequence for the node: a second ring would have to
-		 * invent an ordering between them that the numbers already
-		 * answer, and a subscriber's EventMin filter reads that
-		 * ordering as "already seen". */
-		matter_clusters_record_lock_operation(&info, MATTER_DL_LOCK_OP_LOCK,
-						      MATTER_DL_OP_SOURCE_ALIRO, 0u, 0u);
-		T_EQ("a lock operation shares the ring", (long)matter_clusters_event_count(&info),
-		     2L);
-		T_OK("and the numbers stay one ascending sequence",
-		     info.events[1].number > info.events[0].number);
-		T_EQ("each entry says which event it is", (long)info.events[1].event_id,
-		     (long)MATTER_EVENT_DL_LOCK_OPERATION);
-	}
-
-	t_group("a report carries the alarm, its code, and no operation fields");
-	{
-		fill_info(&info);
-		matter_clusters_init(&srv, &info);
-		matter_clusters_record_alarm(&info, MATTER_DL_ALARM_DOOR_AJAR);
-
-		one_event_path(&req);
-		req.event_paths[0].event = MATTER_EVENT_DL_ALARM;
-		T_EQ("an alarm read encodes",
-		     matter_im_report_data_encode(&srv, &req, out, sizeof(out), &len, NULL),
-		     MATTER_OK);
-		T_EQ("and carries the one event", count_event_reports(out, len, &number, &op), 1);
-		T_EQ("with its event number", (long)number, 1L);
-		/* Field 0 of a DoorLockAlarm is the AlarmCode; field 0 of a
-		 * LockOperation is the operation type. Reading the first field
-		 * is therefore also the check that the right ENCODER ran. */
-		T_EQ("and its first field is the AlarmCode", (long)op,
-		     (long)MATTER_DL_ALARM_DOOR_AJAR);
-
-		/* Same endpoint, same cluster, different event: a subscriber
-		 * watching LockOperation must not be handed an alarm, which is
-		 * what the per-entry event id is FOR. */
-		one_event_path(&req);
-		T_EQ("a LockOperation read encodes",
-		     matter_im_report_data_encode(&srv, &req, out, sizeof(out), &len, NULL),
-		     MATTER_OK);
-		T_EQ("and the alarm is not in it", count_event_reports(out, len, NULL, NULL), 0);
-	}
-#endif /* MATTER_FEATURE_DL_ALARMS */
-
 	t_group("an event filter is what stops a subscriber seeing an unlock twice");
 	{
 		fill_info(&info);
 		matter_clusters_init(&srv, &info);
 		matter_clusters_record_lock_operation(&info, MATTER_DL_LOCK_OP_UNLOCK,
-						      MATTER_DL_OP_SOURCE_ALIRO, 0u, 0u);
+						      MATTER_DL_OP_SOURCE_UNSPECIFIED, 0u, 0u);
 		matter_clusters_record_lock_operation(&info, MATTER_DL_LOCK_OP_LOCK,
-						      MATTER_DL_OP_SOURCE_ALIRO, 0u, 0u);
+						      MATTER_DL_OP_SOURCE_UNSPECIFIED, 0u, 0u);
 
 		one_event_path(&req);
 		T_EQ("unfiltered encodes",
@@ -2370,7 +2230,7 @@ void test_matter_im_events(void)
 		fill_info(&info);
 		matter_clusters_init(&srv, &info);
 		matter_clusters_record_lock_operation(&info, MATTER_DL_LOCK_OP_UNLOCK,
-						      MATTER_DL_OP_SOURCE_ALIRO, 0u, 0u);
+						      MATTER_DL_OP_SOURCE_UNSPECIFIED, 0u, 0u);
 
 		one_event_path(&req);
 		req.event_paths[0].event = 0x00FFu;

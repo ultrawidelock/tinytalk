@@ -8,10 +8,6 @@
  * understand the format -- which is the point. This node parses exactly one
  * field out of it, the Extended PAN ID, and only so it can name the network
  * back to the commissioner.
- *
- * Built into every image. Without CONFIG_OPENTHREAD it refuses honestly
- * rather than disappearing: matter_clusters.c calls it unconditionally, and a
- * link error would be a worse way to learn that Thread was configured out.
  */
 #include <tinymatter/matter_thread.h>
 
@@ -26,10 +22,9 @@
 
 LOG_MODULE_REGISTER(matter_thread, CONFIG_TINYMATTER_THREAD_LOG_LEVEL);
 
-/* CONFIG_OPENTHREAD, not CONFIG_NET_L2_OPENTHREAD: every call below is either
- * OpenThread's own API or one of the four openthread_*() helpers that the
- * standalone module provides, so the Zephyr L2 was never what this needed. */
-#if defined(CONFIG_OPENTHREAD)
+/* Every call below is either OpenThread's own API or one of the four
+ * openthread_*() helpers that the standalone module provides, so the Zephyr
+ * L2 was never what this needed. */
 
 #include <openthread.h>
 #include <openthread/dataset.h>
@@ -269,74 +264,6 @@ static void log_addresses(otInstance *ot)
 			"prefix this node can autoconfigure from");
 	}
 }
-
-#if defined(CONFIG_TINYMATTER_THREAD_DATASET_DUMP)
-/*
- * The active dataset as hex, for `chip-tool pairing ble-thread`.
- *
- * WHY THIS IS HERE AT ALL. Commissioning a second Matter administrator onto
- * this node cannot happen over IP: the Thread receive path in
- * matter_commission.c answers CASE Sigma1/Sigma3 and drops everything else, so
- * PBKDFParamRequest never reaches the PASE responder and a controller that
- * found us over DNS-SD times out having sent five of them. BLE is the only
- * transport PASE runs on here, and chip-tool's BLE path insists on a dataset
- * argument. Passing anything other than the dataset already in force would move
- * the node to a different Thread network and take it out of its home, so the
- * node has to say which one that is.
- *
- * Printed in 32-byte lines because a full dataset is ~110 bytes and one log
- * message cannot carry 220 hex characters. Bare lines between the markers, no
- * prefix, so they concatenate without editing.
- */
-int matter_thread_dump_active_dataset(void)
-{
-	otInstance *ot = openthread_get_default_instance();
-	otOperationalDatasetTlvs tlvs;
-	char line[65];
-	otError err;
-
-	if (ot == NULL) {
-		return -1;
-	}
-
-	openthread_mutex_lock();
-	err = otDatasetGetActiveTlvs(ot, &tlvs);
-	openthread_mutex_unlock();
-
-	if (err != OT_ERROR_NONE) {
-		/* Not attached yet, or never commissioned. Quiet, because the
-		 * bench caller retries and a per-second error line would bury
-		 * the dataset it is waiting for. */
-		return -1;
-	}
-
-	LOG_ERR("---- BEGIN THREAD DATASET (hex, %u B) -- CONTAINS THE NETWORK KEY ----",
-		(unsigned int)tlvs.mLength);
-	for (uint16_t off = 0u; off < tlvs.mLength; off += 32u) {
-		uint16_t n = MIN((uint16_t)32u, (uint16_t)(tlvs.mLength - off));
-		uint16_t i;
-
-		for (i = 0u; i < n; i++) {
-			(void)snprintf(&line[i * 2u], 3u, "%02x", tlvs.mTlvs[off + i]);
-		}
-		line[n * 2u] = '\0';
-		LOG_ERR("%s", line);
-	}
-	LOG_ERR("---- END THREAD DATASET ----");
-	LOG_ERR("join those lines; pass as hex:<joined> to chip-tool pairing ble-thread");
-	return 0;
-}
-#else /* !CONFIG_TINYMATTER_THREAD_DATASET_DUMP */
-
-/* 0, not an error: a shipping build has nothing to print and nothing to retry.
- * Returning "not yet" here would spin the bench caller forever in an image
- * that can never satisfy it. */
-int matter_thread_dump_active_dataset(void)
-{
-	return 0;
-}
-
-#endif /* CONFIG_TINYMATTER_THREAD_DATASET_DUMP */
 
 int matter_thread_wait_attached(uint32_t timeout_ms)
 {
@@ -729,57 +656,6 @@ static void udp_rx(void *ctx, otMessage *msg, const otMessageInfo *info)
  * The address to look for is an off-mesh-routable one, which only exists if the
  * border router is publishing a prefix this node has picked up.
  */
-#if defined(CONFIG_TINYMATTER_SRP_DIAG)
-/**
- * Whether auto-start ever FOUND a server, printed at the only moment that can change.
- *
- * srp_cb() below is the verdict on a registration that was sent. It says nothing
- * about one that was never sent, and the two failures are indistinguishable from
- * every other log this firmware prints: host and services sit at ToAdd either
- * way, and srp_cb() is simply never called, so the "SRP registration FAILED"
- * line reads as absent-because-fine rather than absent-because-nothing-happened.
- *
- * otSrpClientEnableAutoStartMode() picks its server out of Thread network data,
- * so network data changing is the only event that can turn "no server" into
- * "server". Hence OT_CHANGED_THREAD_NETDATA rather than a timer: a timer would
- * print the same answer repeatedly and still miss the transition.
- *
- * Runs on the OpenThread thread with the API lock already held, which is why
- * nothing here takes openthread_mutex_lock() -- the same reason thread_gate.c's
- * callback does not.
- */
-static void srp_diag_state_changed(otChangedFlags flags, void *context)
-{
-	ARG_UNUSED(context);
-
-	if ((flags & OT_CHANGED_THREAD_NETDATA) == 0u) {
-		return;
-	}
-
-	otInstance *ot = openthread_get_default_instance();
-	char buf[OT_IP6_ADDRESS_STRING_SIZE];
-	const otSrpClientHostInfo *host;
-	const otSockAddr *server;
-
-	if (!otSrpClientIsRunning(ot)) {
-		LOG_WRN("SRP diag: network data changed, client STILL NOT RUNNING -- "
-			"auto-start has been offered no server by this network");
-		return;
-	}
-
-	host = otSrpClientGetHostInfo(ot);
-	server = otSrpClientGetServerAddress(ot);
-	otIp6AddressToString(&server->mAddress, buf, sizeof(buf));
-	LOG_INF("SRP diag: network data changed, client running against [%s]:%u, host state %d",
-		buf, (unsigned int)server->mPort, host != NULL ? (int)host->mState : -1);
-}
-
-static struct openthread_state_changed_callback srp_diag_cb = {
-	.otCallback = srp_diag_state_changed,
-};
-
-static bool s_srp_diag_registered;
-#endif /* CONFIG_TINYMATTER_SRP_DIAG */
 
 /* All three helpers require OpenThread's API lock. srp_cb() already runs with
  * it held; public entry points take it before calling them. */
@@ -1119,11 +995,6 @@ static int srp_register_operational_locked(otInstance *ot, const struct srp_want
 	}
 	reg->state = SRP_SLOT_ACTIVE;
 	otSrpClientEnableAutoStartMode(ot, NULL, NULL);
-#if defined(CONFIG_TINYMATTER_SRP_DIAG)
-	if (!s_srp_diag_registered) {
-		s_srp_diag_registered = openthread_state_changed_callback_register(&srp_diag_cb) == 0;
-	}
-#endif
 	LOG_INF("SRP: %s.%s._matter._tcp on %s.local port %u", reg->instance_name, reg->subtype,
 		s_host_name, (unsigned int)wanted->port);
 	return MATTER_OK;
@@ -1350,95 +1221,3 @@ int matter_thread_unadvertise_commissionable(void)
 	return MATTER_OK;
 }
 
-#else /* !CONFIG_OPENTHREAD */
-
-/**
- * Advertise this node's services to SRP. Returns MATTER_E_STATE; Thread is not built into this
- * image.
- */
-int matter_thread_advertise(const char *instance_name, uint16_t port)
-{
-	ARG_UNUSED(instance_name);
-	ARG_UNUSED(port);
-
-	return MATTER_E_STATE;
-}
-
-/**
- * Publish the commissionable service. Returns MATTER_E_STATE; Thread is not built into this image.
- */
-int matter_thread_advertise_commissionable(uint16_t discriminator, uint16_t port)
-{
-	ARG_UNUSED(discriminator);
-	ARG_UNUSED(port);
-
-	return MATTER_E_STATE;
-}
-
-/**
- * Withdraw one operational service. Returns MATTER_OK; nothing was ever registered.
- */
-int matter_thread_unadvertise(const char *instance_name)
-{
-	ARG_UNUSED(instance_name);
-
-	return MATTER_OK;
-}
-
-/**
- * Withdraw the commissionable service. Returns MATTER_OK; nothing was ever registered.
- */
-int matter_thread_unadvertise_commissionable(void)
-{
-	return MATTER_OK;
-}
-
-/**
- * Print the active dataset. No-op; Thread is not built into this image.
- */
-int matter_thread_dump_active_dataset(void)
-{
-	return 0;
-}
-
-/**
- * Start Thread with the provided operational dataset. Returns MATTER_E_STATE; Thread is not built
- * into this image.
- */
-int matter_thread_start(const uint8_t *dataset, size_t len)
-{
-	ARG_UNUSED(dataset);
-	ARG_UNUSED(len);
-
-	LOG_WRN("Thread dataset received, but this image has no Thread stack");
-	return MATTER_E_STATE;
-}
-
-/**
- * Is this node already on that network? Always false; there is no Thread stack in this image, so
- * it is on no network at all.
- */
-int matter_thread_clear(void)
-{
-	return MATTER_E_STATE;
-}
-
-bool matter_thread_attached_to(const uint8_t *xpanid)
-{
-	ARG_UNUSED(xpanid);
-
-	return false;
-}
-
-/**
- * Stub: always returns MATTER_E_TIMEOUT. Thread attachment checking is not implemented on this
- * target.
- */
-int matter_thread_wait_attached(uint32_t timeout_ms)
-{
-	ARG_UNUSED(timeout_ms);
-
-	return MATTER_E_TIMEOUT;
-}
-
-#endif /* CONFIG_OPENTHREAD */

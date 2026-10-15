@@ -5,7 +5,7 @@
 A from-scratch Matter accessory node in portable C11. Apple Home commissions it
 over BLE, and it runs over Thread. It is small enough for an nRF52833 (512 KB
 flash, 128 KB RAM). The core has no OS dependency; Zephyr with OpenThread is
-the first port, and Thread is optional. It is not a certified Matter stack.
+the first port. It is not a certified Matter stack.
 
 Extracted from ultrawidelock@d6e23761.
 
@@ -22,13 +22,14 @@ with the crypto and the OS behind narrow seams (see PORTING.md).
 - Operational CASE sessions and the Interaction Model: read, write, invoke,
   subscribe.
 - Thread as an MTD: attach with the dataset the commissioner sends, SRP
-  registration, Matter over UDP. `overlay-thread.conf` turns it on.
-- The Door Lock cluster. In `samples/door-lock` it drives LED0.
-- Multi-admin, a second ecosystem beside Apple Home, with
-  `CONFIG_TINYMATTER_MULTI_ADMIN=y`. The sample leaves it off; in the source
-  project only the client-role image turned it on.
+  registration, Matter over UDP.
+- The Door Lock cluster with no optional features: LockDoor, UnlockDoor,
+  LockState, AutoRelockTime and the LockOperation event. In
+  `samples/door-lock` it drives LED0.
+- Three fabrics, enough for one Apple Home (it uses two) plus one spare.
 
-What it does not do: Matter certification, Wi-Fi, OTA updates, groups.
+What it does not do: Matter certification, Wi-Fi, OTA updates, groups, door
+lock users or credentials, acting as a controller.
 
 Hardware status: the behaviour above was developed and run on hardware in the
 source project. Builds from this repository have been compiled for both
@@ -66,50 +67,22 @@ or set `MBEDTLS_PREFIX`); `make test SPAKE=fake` needs no library.
 From inside an nRF Connect SDK v3.3.0 workspace:
 
 ```
-west build -b decawave_dwm3001cdk -d <build-dir> <repo>/samples/door-lock \
-  -- -DEXTRA_CONF_FILE=overlay-thread.conf
-west flash -d <build-dir>
+west build -b decawave_dwm3001cdk -d <build-dir> <repo>/samples/door-lock
+west flash --erase -d <build-dir>
 ```
 
-Use `-b nrf52833dk/nrf52833` for the nRF52833 DK, and drop the
-`EXTRA_CONF_FILE` for a BLE-only build. Logs go to SEGGER RTT.
+Use `-b nrf52833dk/nrf52833` for the nRF52833 DK. Logs go to SEGGER RTT.
 
 ## Sizes
 
 Measured 2026-10-16 from the linker's memory-region report, building
 `samples/door-lock` with nRF Connect SDK v3.3.0 and its default flash map
-(504 KB application partition), without `overlay-lto.conf`:
+(504 KB application partition):
 
-| Board | Thread | Flash | RAM |
-|---|---|---|---|
-| decawave_dwm3001cdk | off | 220,648 B of 504 KB (42.75%) | 74,312 B of 128 KB (56.70%) |
-| decawave_dwm3001cdk | on | 368,232 B of 504 KB (71.35%) | 109,360 B of 128 KB (83.44%) |
-| nrf52833dk/nrf52833 | off | 220,940 B of 504 KB (42.81%) | 74,312 B of 128 KB (56.70%) |
-| nrf52833dk/nrf52833 | on | 363,372 B of 504 KB (70.41%) | 109,168 B of 128 KB (83.29%) |
-
-Thread on means `-DEXTRA_CONF_FILE=overlay-thread.conf`.
-
-## Fuzzing
-
-`make fuzz` builds five libFuzzer targets from `tests/host/fuzz/` (TLV
-decoder, message headers, BTP reassembly, Interaction Model requests, PASE
-PBKDFParamRequest and CASE Sigma1) and runs each for `FUZZ_TIME` seconds
-(default 600) from the seeds in `tests/host/fuzz/seeds/`. It needs a clang with
-libFuzzer, Homebrew LLVM's by default (`FUZZ_CC`). Pass `FUZZ_LDFLAGS` if the
-default linker is not the platform one. It only runs when invoked; keep it out
-of CI.
-
-Status: the full 10 minutes per target has not been run. One local run on
-2026-10-15 was stopped early; before the stop it found no crash and no
-sanitizer report:
-
-| Target | Inputs tried | Crashes |
+| Board | Flash | RAM |
 |---|---|---|
-| tlv | 483,402 | 0 |
-| msg | 2,097,152 | 0 |
-| btp | 1,275,854 | 0 |
-| im | 1,026,486 | 0 |
-| pase_case | 781,804 | 0 |
+| decawave_dwm3001cdk | 345,784 B of 504 KB (67.00%) | 101,920 B of 128 KB (77.76%) |
+| nrf52833dk/nrf52833 | 340,912 B of 504 KB (66.06%) | 101,728 B of 128 KB (77.61%) |
 
 ## License
 

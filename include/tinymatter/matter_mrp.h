@@ -165,7 +165,7 @@ enum matter_mrp_action {
 };
 
 /*
- * BARELY WIRED UP ON THE DWM3001CDK, AND DELIBERATELY SO. Read this before
+ * BARELY WIRED UP ON THE DEVICE, AND DELIBERATELY SO. Read this before
  * "fixing" it.
  *
  * The RESPONDER side drives only matter_mrp_window_* -- duplicate suppression

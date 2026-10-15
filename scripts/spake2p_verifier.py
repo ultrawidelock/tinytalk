@@ -11,7 +11,7 @@ Someone who reads the flash gets w0 and L, which are enough to VERIFY a
 commissioner that knows the passcode and not enough to impersonate one. That is
 the whole point of the augmented form, and the reason this runs here rather than
 on the device: L needs a base-point multiply, which is not one of the four
-operations nrf_oberon exposes to the reader.
+SPAKE2+ operations the device's crypto backend provides.
 
 Usage:
 

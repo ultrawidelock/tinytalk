@@ -9,14 +9,11 @@
  * the reassembler, drive the fragmenter out through C2 indications, and build
  * the commissionable advertisement.
  *
- * Modelled on the source project's credential BLE port -- same shape, proven against live iPhones.
  * C1 (RX, write) is 18EE2EF5-263D-4559-959F-4F9C429F9D11, C2 (TX, indicate)
  * ...D12, spelled below in the little-endian order BT_UUID_INIT_128 wants.
  *
- * NOT wired into the reader's advertising: the reader owns one advertising set
- * (credential 0xFFF2), and matter_ble_advertise_start() is never called on its own,
- * so an image with this file compiled in behaves exactly as before until
- * something asks for it.
+ * It does not advertise: the application owns the advertising set and asks
+ * this file for the commissionable payload.
  */
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/conn.h>
@@ -105,16 +102,8 @@ static matter_ble_tx_cb s_tx_cb;
 static bool s_tx_notifies;
 
 /*
- * The node's own work queue. Stage 0 measured k_sys_work_q at 3,568 of 4,096
- * bytes during an unlock, and the reader already defers BLE work there, so
- * anything Matter submits to it overflows it. Owning a queue is the other half
- * of that constraint; thread priority alone is not enough.
- *
- * The stack size is PROVISIONAL and deliberately generous. Two stack sizes were
- * guessed low earlier in this project and both faulted on hardware, so the rule
- * now is to start roomy and trim from CONFIG_THREAD_ANALYZER_AUTO output rather
- * than from a plausible-looking round number. Nothing here is expensive yet;
- * PASE is what will actually load it, and it must be re-measured then.
+ * The node's own work queue, so PASE's deep stack (see
+ * CONFIG_TINYMATTER_BLE_WQ_STACK) is not charged to the system work queue.
  */
 K_THREAD_STACK_DEFINE(matter_wq_stack, CONFIG_TINYMATTER_BLE_WQ_STACK);
 static struct k_work_queue_config matter_wq_cfg = {.name = "matter_wq"};
@@ -374,38 +363,12 @@ static void c2_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
 }
 
 /*
- * PUBLISHED ONLY WHILE COMMISSIONING IS ACTUALLY POSSIBLE. This is a dynamic
- * service, registered and withdrawn to follow the advert, for one reason:
- *
- * MACOS REFUSES THIS SERVICE TO THIRD PARTIES, AND THAT BREAKS EVERY OTHER
- * SERVICE ON THE BOARD. CoreBluetooth reserves the Matter commissioning UUIDs
- * for the system and answers a descriptor discovery on C1 with CBError 8,
- * CBErrorUUIDNotAllowed. Chromium's macOS backend logs that error and returns
- * without marking the characteristic discovered, so its GATT-discovery-complete
- * event never fires (bluetooth_low_energy_device_mac.mm; the TODO is
- * crbug.com/609844). getPrimaryService() then never settles -- Web Bluetooth
- * has no timeout of its own -- and the browser update path hangs on a board
- * that connected perfectly.
- *
- * MEASURED 2026-08-27 against this reader, one service at a time:
- *
- *     SMP              ok     h23
- *     native DFU       ok     h19
- *     credential FFF2  ok     h27 h29
- *     Matter FFF6      FAILS  CBError 8 at handle 13   <- C1
- *     SMP again        FAILS  <- the host cache is now poisoned
- *
- * The last line is why this looked intermittent for so long: one refused
- * discovery makes every later connection to the board fail, including ones that
- * would have worked, until the cache clears.
- *
- * A COMMISSIONED LOCK HAS NO USE FOR THIS SERVICE. The advert already carries
- * the credential payload rather than the commissionable one, chosen by exactly
- * the predicate that now gates registration (advertising_payload_build() in
- * the source project's credential BLE port). The GATT table simply did not follow the advert:
- * the board said "I am a reader, do not commission me" and published a
- * commissioning service anyway. Making the two agree is correct on its own
- * terms, and it happens to hand macOS a table it will walk.
+ * PUBLISHED ONLY WHILE COMMISSIONING IS ACTUALLY POSSIBLE: a dynamic service,
+ * registered and withdrawn to follow the advert. A commissioned lock has no use
+ * for it, and macOS refuses it to third parties: CoreBluetooth answers a
+ * descriptor discovery on C1 with CBError 8 (CBErrorUUIDNotAllowed), and one
+ * refused discovery poisons the host's cache for every later connection to the
+ * board. Measured in ultrawidelock, 2026-08-27.
  *
  * Order matters: attrs[4] is the C2 VALUE, which is what an indication targets.
  */
@@ -649,10 +612,10 @@ void matter_ble_set_msg_handler(matter_ble_msg_cb cb)
 /* ---- connection tracking ------------------------------------------------- */
 
 /*
- * The connection is claimed on the first C1 write, NOT on connect. The reader
- * accepts BLE connections too, and claiming every one of them would let an
- * credential peer occupy the single commissioning slot and lock out a real
- * commissioner. A peer that writes C1 has identified itself as one.
+ * The connection is claimed on the first C1 write, NOT on connect: a peer that
+ * merely connects (a scanner, a phone probing services) must not occupy the
+ * single commissioning slot and lock out a real commissioner. A peer that
+ * writes C1 has identified itself as one.
  */
 static bool claim_conn(struct bt_conn *conn)
 {

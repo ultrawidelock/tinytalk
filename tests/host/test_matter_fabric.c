@@ -104,45 +104,6 @@ void test_matter_fabric(void)
 	T_OK("public key is the certificate's",
 	     memcmp(info.public_key, k_node01_pubkey, sizeof(k_node01_pubkey)) == 0);
 
-	/*
-	 * PINNED AGAINST CHIP ITSELF, because "it verifies" is not enough here.
-	 * A Matter certificate's signature is the X.509 one over the DER
-	 * TBSCertificate, so a converter that is merely self-consistent will
-	 * verify certificates it produced and reject every real one -- which is
-	 * exactly the bug this replaced, and it survived thousands of green
-	 * assertions by agreeing with a test fixture that made the same
-	 * mistake. The only test worth having compares the bytes to what the
-	 * reference implementation builds for the same input.
-	 *
-	 * The digest is SHA-256 over CHIP's TBS for k_node01, 394 bytes.
-	 */
-	{
-		static const uint8_t chip_tbs_sha256[32] = {
-			0xad, 0xe1, 0xa1, 0x06, 0x1a, 0xd6, 0xfe, 0x55, 0xac, 0x5d, 0x8a,
-			0xdb, 0x56, 0x22, 0x7a, 0x8c, 0x26, 0x65, 0x33, 0x3c, 0x40, 0xdc,
-			0x59, 0x9e, 0x86, 0x11, 0x7c, 0x1f, 0x9e, 0xc2, 0xe6, 0x99,
-		};
-		uint8_t tbs[512];
-		uint8_t digest[32];
-		const uint8_t *signature;
-		size_t tbs_len = 0u;
-		struct tm_sha256 hash;
-
-		T_EQ("certificate converts to canonical X.509 TBS",
-		     matter_case_cert_tbs(k_node01, sizeof(k_node01), tbs, sizeof(tbs), &tbs_len,
-					  &signature),
-		     MATTER_OK);
-		T_EQ("canonical TBS has CHIP's length", (long)tbs_len, 394L);
-		tm_sha256_init(&hash);
-		tm_sha256_update(&hash, tbs, tbs_len);
-		tm_sha256_final(&hash, digest);
-		T_OK("canonical TBS is byte-identical to CHIP",
-		     memcmp(digest, chip_tbs_sha256, sizeof(digest)) == 0);
-		T_OK("signature is borrowed from the certificate",
-		     signature >= k_node01 &&
-			     signature + MATTER_CASE_SIG_LEN <= k_node01 + sizeof(k_node01));
-	}
-
 	t_group("a root certificate");
 
 	T_EQ("root01 parses", matter_cert_parse(k_root01, sizeof(k_root01), &info), MATTER_OK);
@@ -628,8 +589,8 @@ void test_matter_addnoc(void)
 		 * re-sent under a NEW message counter -- past the replay window,
 		 * into a node whose fail-safe the first copy had already
 		 * disarmed. Answering NO_FAIL_SAFE there made it abandon the
-		 * fabric it had just finished building, and every later step
-		 * (the reader config, the endpoint key, the walk-up) never ran.
+		 * fabric it had just finished building, and every step after
+		 * commissioning never ran.
 		 */
 		invoke_init(&inv, MATTER_CMD_GC_COMMISSIONING_COMPLETE, NULL, 0u);
 		inv.cluster = MATTER_CLUSTER_GENERAL_COMMISSIONING;

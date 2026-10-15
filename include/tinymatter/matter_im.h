@@ -70,13 +70,8 @@ extern "C" {
 /**
  * The peer knows the command and will not let this node run it (line 34).
  *
- * Both directions need it. As a server this node answers it when the
- * accessing fabric's access control list grants too little for the request.
- * As a client it is what a bound lock answers when ITS list has no entry for
- * this node, and it is the single most likely way a binding fails once
- * everything else is right. Reported as itself rather than as a generic
- * failure, because the fix is specific and the log line is the only place it
- * can be named.
+ * This node answers it when the accessing fabric's access control list grants
+ * too little for the request.
  */
 #define MATTER_IM_STATUS_UNSUPPORTED_ACCESS    0x7Eu
 #define MATTER_IM_STATUS_UNSUPPORTED_ENDPOINT  0x7Fu /* line 35 */
@@ -553,7 +548,7 @@ struct matter_im_server {
  */
 /**
  * Room to rebuild a chunked list write. Matches MATTER_ACL_MAX, the largest
- * list any cluster on this node will store; a binding list is far smaller.
+ * list any cluster on this node will store.
  * Stated here rather than included from matter_clusters.h, which is the layer
  * above this one.
  */

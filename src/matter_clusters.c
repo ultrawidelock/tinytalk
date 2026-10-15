@@ -39,8 +39,8 @@
 #ifndef MATTER_VENDOR_NAME
 #define MATTER_VENDOR_NAME   "tinymatter"
 #endif
-#define MATTER_PRODUCT_NAME  "DWM3001CDK credential Reader"
-#define MATTER_SERIAL_NUMBER_FALLBACK "DWM3001CDK-UNKNOWN"
+#define MATTER_PRODUCT_NAME  "tinymatter door lock"
+#define MATTER_SERIAL_NUMBER_FALLBACK "TM-UNKNOWN"
 
 /* Descriptor/Structs.h:43-44, DeviceTypeStruct. */
 #define TAG_DEVTYPE_TYPE     0u
@@ -79,20 +79,6 @@ static const uint32_t k_root_servers[] = {
 static const uint32_t k_lock_servers[] = {
 	MATTER_CLUSTER_DESCRIPTOR,
 	MATTER_CLUSTER_DOOR_LOCK,
-#if TINYMATTER_VENDOR_CLUSTERS
-	MATTER_CLUSTER_APPROACH_DIRECTION,
-	MATTER_CLUSTER_UWB_PRESENCE,
-#endif
-#if MATTER_FEATURE_CLIENT
-	/*
-	 * Advertised as a SERVER even though the point of it is to make this
-	 * node a client. Not a contradiction: the Binding cluster's server is
-	 * the thing an administrator writes the target list into, and a
-	 * controller that cannot find it here has no way to configure the
-	 * client at all.
-	 */
-	MATTER_CLUSTER_BINDING,
-#endif
 };
 
 /* NetworkInfoStruct (python clusters/Objects.py, NetworkInfoStruct). */
@@ -441,62 +427,6 @@ static bool fabric_slot_has_privilege(const struct matter_device_info *info, siz
 	}
 }
 
-#if TINYMATTER_VENDOR_CLUSTERS
-/*
- * May the accessor read attribute @p attribute of the UWB presence cluster?
- *
- * The five global attributes are always readable. The core spec's global
- * elements table gives each of them read access V, so their read privilege is
- * View wherever they appear and this cluster does not get to raise it. They are
- * metadata anyway: FeatureMap, ClusterRevision, AttributeList and the two
- * command lists describe the cluster, not the person standing outside the door.
- *
- * The other twelve are Manage, and the spec's rule is that a readable attribute
- * SHALL define the single privilege required to read it -- a manufacturer
- * cluster is not exempt from that and gets no special floor beyond View. The
- * DEFAULT, for an attribute that declares nothing, is View: that is what
- * LockState takes, and it was defensible because "locked" or "unlocked" is one
- * bit about a bolt. These twelve are not that. DeviceInRange, DistanceMm,
- * DeviceId and MovementState are where a person is and which credential they
- * carry, sampled continuously; the eight tuning attributes say at what range
- * this lock opens, which is worth knowing to somebody intending to be at that
- * range. The one place Door Lock departs from View is exactly this kind of
- * data -- the seven Aliro reader attributes read at Administer, and the user
- * and credential records are only reachable through GetUser and
- * GetCredentialStatus, which invoke at Administer.
- *
- * Manage rather than Administer because Administer would leave presence
- * readable only by the hub that commissioned the lock, and watching the
- * approach is what a household's own automation controller exists to do; Manage
- * is the privilege such a controller is granted. Below it, a guest holding
- * Operate can still unlock the door and can no longer watch the household walk
- * up to it, which is the whole point.
- *
- * Writes to this cluster were already Administer (see attr_write); this is the
- * read half, which had no check at all.
- */
-static bool uwb_presence_read_allowed(const struct matter_device_info *info, uint32_t attribute)
-{
-	switch (attribute) {
-	case MATTER_ATTR_FEATURE_MAP:
-	case MATTER_ATTR_CLUSTER_REVISION:
-	case MATTER_ATTR_ATTRIBUTE_LIST:
-	case MATTER_ATTR_ACCEPTED_CMD_LIST:
-	case MATTER_ATTR_GENERATED_CMD_LIST:
-		return true;
-	default:
-		break;
-	}
-	if (info == NULL) {
-		return false;
-	}
-	return fabric_slot_has_privilege(info,
-					 fabric_slot_for_index(info, info->accessing_fabric_index),
-					 MATTER_AC_PRIVILEGE_MANAGE, MATTER_ENDPOINT_LOCK,
-					 MATTER_CLUSTER_UWB_PRESENCE);
-}
-#endif
-
 /** How many fabrics hold a complete identity. */
 static uint8_t fabric_count(const struct matter_device_info *info)
 {
@@ -525,12 +455,6 @@ static int fabric_store(struct matter_device_info *info,
 		value_len);
 }
 
-/* The user table is node-wide: there is no slot and no value to name. */
-static int users_store(struct matter_device_info *info)
-{
-	return fabric_store(info, MATTER_FABRIC_STORE_USERS, 0u, NULL, 0u);
-}
-
 static void fabric_slot_clear(struct matter_device_info *info, size_t slot)
 {
 	struct matter_fabric *f;
@@ -550,17 +474,6 @@ static void fabric_slot_clear(struct matter_device_info *info, size_t slot)
 		memset(&info->icac, 0, sizeof(info->icac));
 	}
 	memset(&info->fabric_acls[slot], 0, sizeof(info->fabric_acls[slot]));
-#if MATTER_FEATURE_CLIENT
-	/*
-	 * And the bindings this administrator wrote. A binding that outlives
-	 * the fabric it belongs to is this lock still unlocking another lock on
-	 * behalf of somebody who has been removed from the system -- and there
-	 * is nothing left in the table to say who asked for it. Here rather
-	 * than at RemoveFabric because a rolled-back attempt wipes a slot too,
-	 * and a provisional administrator can write a binding before it fails.
-	 */
-	matter_binding_forget_fabric(&info->binding, f->index);
-#endif
 	memset(f, 0, sizeof(*f));
 	info->attempt.owned_slots &= (uint8_t)~MATTER_FABRIC_SLOT_BIT(slot);
 	info->committed_slots &= (uint8_t)~MATTER_FABRIC_SLOT_BIT(slot);
@@ -602,15 +515,7 @@ static bool has_cluster(void *ctx, uint16_t endpoint, uint32_t cluster)
 
 	if (endpoint == MATTER_ENDPOINT_LOCK) {
 		return cluster == MATTER_CLUSTER_DESCRIPTOR ||
-		       cluster == MATTER_CLUSTER_DOOR_LOCK ||
-#if MATTER_FEATURE_CLIENT
-		       cluster == MATTER_CLUSTER_BINDING ||
-#endif
-#if TINYMATTER_VENDOR_CLUSTERS
-		       cluster == MATTER_CLUSTER_APPROACH_DIRECTION ||
-		       cluster == MATTER_CLUSTER_UWB_PRESENCE ||
-#endif
-		       false;
+		       cluster == MATTER_CLUSTER_DOOR_LOCK;
 	}
 	if (endpoint != MATTER_ENDPOINT_ROOT) {
 		return false;
@@ -676,93 +581,6 @@ static uint8_t attr_status(void *ctx, uint16_t endpoint, uint32_t cluster, uint3
 				return MATTER_IM_STATUS_UNSUPPORTED_ATTRIBUTE;
 			}
 		}
-#if MATTER_FEATURE_CLIENT
-		if (cluster == MATTER_CLUSTER_BINDING) {
-			const struct matter_device_info *info =
-				(const struct matter_device_info *)ctx;
-
-			/*
-			 * One of the two places in this function that read ctx
-			 * -- the UWB presence gate below is the other -- and it
-			 * has to: the PIN attribute's id is built from this
-			 * node's vendor id (MATTER_ATTR_BINDING_PIN), so there
-			 * is no constant to put in a case label. A node with no
-			 * vendor id has no such attribute rather than one at
-			 * 0x0000, which is the standard list.
-			 */
-			if (info != NULL && info->vendor_id != 0u &&
-			    attribute == MATTER_ATTR_BINDING_PIN(info->vendor_id)) {
-				return MATTER_IM_STATUS_SUCCESS;
-			}
-			switch (attribute) {
-			case MATTER_ATTR_BINDING_LIST:
-			case MATTER_ATTR_FEATURE_MAP:
-			case MATTER_ATTR_CLUSTER_REVISION:
-			case MATTER_ATTR_ATTRIBUTE_LIST:
-			case MATTER_ATTR_ACCEPTED_CMD_LIST:
-			case MATTER_ATTR_GENERATED_CMD_LIST:
-				return MATTER_IM_STATUS_SUCCESS;
-			default:
-				return MATTER_IM_STATUS_UNSUPPORTED_ATTRIBUTE;
-			}
-		}
-#endif
-#if TINYMATTER_VENDOR_CLUSTERS
-		if (cluster == MATTER_CLUSTER_APPROACH_DIRECTION) {
-			switch (attribute) {
-			case MATTER_ATTR_APPROACH_DIRECTION:
-			case MATTER_ATTR_FEATURE_MAP:
-			case MATTER_ATTR_CLUSTER_REVISION:
-			case MATTER_ATTR_ATTRIBUTE_LIST:
-			case MATTER_ATTR_ACCEPTED_CMD_LIST:
-			case MATTER_ATTR_GENERATED_CMD_LIST:
-				return MATTER_IM_STATUS_SUCCESS;
-			default:
-				return MATTER_IM_STATUS_UNSUPPORTED_ATTRIBUTE;
-			}
-		}
-		if (cluster == MATTER_CLUSTER_UWB_PRESENCE) {
-			switch (attribute) {
-			case MATTER_ATTR_UWB_DEVICE_IN_RANGE:
-			case MATTER_ATTR_UWB_DISTANCE_MM:
-			case MATTER_ATTR_UWB_DEVICE_ID:
-			case MATTER_ATTR_UWB_UNLOCK_THRESHOLD_CM:
-			case MATTER_ATTR_UWB_MOVEMENT_STATE:
-			case MATTER_ATTR_UWB_APPROACH_CM:
-			case MATTER_ATTR_UWB_RELOCK_CM:
-			case MATTER_ATTR_UWB_MOTOR_MS:
-			case MATTER_ATTR_UWB_DISTANCE_RELOCK:
-			case MATTER_ATTR_UWB_BOUND_UNLOCK:
-			case MATTER_ATTR_UWB_LOCK_RELOCK:
-			case MATTER_ATTR_UWB_LOCK_UNLOCK:
-			case MATTER_ATTR_FEATURE_MAP:
-			case MATTER_ATTR_CLUSTER_REVISION:
-			case MATTER_ATTR_ATTRIBUTE_LIST:
-			case MATTER_ATTR_ACCEPTED_CMD_LIST:
-			case MATTER_ATTR_GENERATED_CMD_LIST:
-				/*
-				 * Supported first, permitted second, and the
-				 * order is the answer here too: refusing an
-				 * attribute this cluster does not have with
-				 * UNSUPPORTED_ACCESS tells a controller its
-				 * privilege was the problem when its path was.
-				 *
-				 * This is the ONLY cluster on this node whose
-				 * reads are gated, and the gate lives here
-				 * rather than in attr_value() because status is
-				 * what every read path consults first --
-				 * including the wildcard expansion, which drops
-				 * a path this refuses instead of reporting it.
-				 */
-				return uwb_presence_read_allowed(
-					       (const struct matter_device_info *)ctx, attribute)
-					       ? MATTER_IM_STATUS_SUCCESS
-					       : MATTER_IM_STATUS_UNSUPPORTED_ACCESS;
-			default:
-				return MATTER_IM_STATUS_UNSUPPORTED_ATTRIBUTE;
-			}
-		}
-#endif
 		if (cluster != MATTER_CLUSTER_DOOR_LOCK) {
 			return MATTER_IM_STATUS_UNSUPPORTED_CLUSTER;
 		}
@@ -773,24 +591,10 @@ static uint8_t attr_status(void *ctx, uint16_t endpoint, uint32_t cluster, uint3
 		case MATTER_ATTR_DL_AUTO_RELOCK_TIME:
 		case MATTER_ATTR_DL_OPERATING_MODE:
 		case MATTER_ATTR_DL_SUPPORTED_OPERATING_MODES:
-		case MATTER_ATTR_DL_ALIRO_VERIFICATION_KEY:
-		case MATTER_ATTR_DL_ALIRO_GROUP_ID:
-		case MATTER_ATTR_DL_ALIRO_GROUP_SUB_ID:
-		case MATTER_ATTR_DL_ALIRO_EXPEDITED_VERSIONS:
-		case MATTER_ATTR_DL_ALIRO_GROUP_RESOLVING_KEY:
-		case MATTER_ATTR_DL_ALIRO_BLE_UWB_VERSIONS:
-		case MATTER_ATTR_DL_ALIRO_BLE_ADV_VERSION:
-		case MATTER_ATTR_DL_ALIRO_ISSUER_KEYS_MAX:
-		case MATTER_ATTR_DL_ALIRO_ENDPOINT_KEYS_MAX:
-		case MATTER_ATTR_DL_USERS_MAX:
-		case MATTER_ATTR_DL_CREDS_PER_USER_MAX:
-		case MATTER_ATTR_DL_CREDENTIAL_RULES:
 		/*
 		 * FeatureMap is answered here for the same reason it is on
 		 * NetworkCommissioning: it is what a controller reads to decide
-		 * whether this lock is a credential reader, and without it the
-		 * credential attributes below look like a lock that answers
-		 * questions nobody asked.
+		 * which optional Door Lock features this lock has.
 		 */
 		case MATTER_ATTR_FEATURE_MAP:
 		/*
@@ -912,32 +716,11 @@ static uint8_t attr_status(void *ctx, uint16_t endpoint, uint32_t cluster, uint3
 	}
 }
 
-/**
- * One credential protocol version, as the two big-endian bytes the spec asks for.
- *
- * Both version lists carry the same single entry, so they share this. The
- * ESP32 lock of the project this was extracted from encodes it the same way,
- * and that is the port Apple Home has actually provisioned.
- */
-static void put_protocol_version_list(struct matter_tlv_writer *w, matter_tlv_tag_t tag)
-{
-	const uint8_t version[2] = {
-		(uint8_t)(MATTER_ALIRO_PROTOCOL_VERSION >> 8),
-		(uint8_t)(MATTER_ALIRO_PROTOCOL_VERSION & 0xFFu),
-	};
-
-	(void)matter_tlv_start_container(w, tag, MATTER_TLV_ARRAY);
-	(void)matter_tlv_put_bytes(w, MATTER_TLV_ANON, version, sizeof(version));
-	(void)matter_tlv_end_container(w);
-}
-
 /*
  * FeatureMap leads, because it is the attribute that decides what the rest
- * mean: without the two credential bits a controller reads 0x0080..0x0088 as
- * attributes a lock has no business answering. The four other globals close
- * the list, and the list includes them because it IS AttributeList: the same
- * array expands a wildcard and answers 0xFFFB, so the two cannot disagree
- * about what this cluster carries.
+ * mean. The four other globals close the list, and the list includes them
+ * because it IS AttributeList: the same array expands a wildcard and answers
+ * 0xFFFB, so the two cannot disagree about what this cluster carries.
  */
 static const uint32_t k_lock_attrs[] = {
 	MATTER_ATTR_FEATURE_MAP,
@@ -947,18 +730,6 @@ static const uint32_t k_lock_attrs[] = {
 	MATTER_ATTR_DL_AUTO_RELOCK_TIME,
 	MATTER_ATTR_DL_OPERATING_MODE,
 	MATTER_ATTR_DL_SUPPORTED_OPERATING_MODES,
-	MATTER_ATTR_DL_ALIRO_VERIFICATION_KEY,
-	MATTER_ATTR_DL_ALIRO_GROUP_ID,
-	MATTER_ATTR_DL_ALIRO_GROUP_SUB_ID,
-	MATTER_ATTR_DL_ALIRO_EXPEDITED_VERSIONS,
-	MATTER_ATTR_DL_ALIRO_GROUP_RESOLVING_KEY,
-	MATTER_ATTR_DL_ALIRO_BLE_UWB_VERSIONS,
-	MATTER_ATTR_DL_ALIRO_BLE_ADV_VERSION,
-	MATTER_ATTR_DL_ALIRO_ISSUER_KEYS_MAX,
-	MATTER_ATTR_DL_ALIRO_ENDPOINT_KEYS_MAX,
-	MATTER_ATTR_DL_USERS_MAX,
-	MATTER_ATTR_DL_CREDS_PER_USER_MAX,
-	MATTER_ATTR_DL_CREDENTIAL_RULES,
 	MATTER_ATTR_CLUSTER_REVISION,
 	MATTER_ATTR_ATTRIBUTE_LIST,
 	MATTER_ATTR_ACCEPTED_CMD_LIST,
@@ -973,89 +744,7 @@ static const uint32_t k_lock_attrs[] = {
 static const uint32_t k_lock_accepted_cmds[] = {
 	MATTER_CMD_DL_LOCK_DOOR,
 	MATTER_CMD_DL_UNLOCK_DOOR,
-	MATTER_CMD_DL_SET_USER,
-	MATTER_CMD_DL_GET_USER,
-	MATTER_CMD_DL_CLEAR_USER,
-	MATTER_CMD_DL_SET_CREDENTIAL,
-	MATTER_CMD_DL_GET_CREDENTIAL_STATUS,
-	MATTER_CMD_DL_CLEAR_CREDENTIAL,
-	MATTER_CMD_DL_SET_ALIRO_READER_CONFIG,
 };
-
-static const uint32_t k_lock_generated_cmds[] = {
-	MATTER_CMD_DL_GET_USER_RESPONSE,
-	MATTER_CMD_DL_SET_CREDENTIAL_RESPONSE,
-	MATTER_CMD_DL_GET_CREDENTIAL_STATUS_RESPONSE,
-};
-
-#if TINYMATTER_VENDOR_CLUSTERS
-static const uint32_t k_approach_attrs[] = {
-	MATTER_ATTR_APPROACH_DIRECTION,
-	MATTER_ATTR_FEATURE_MAP,
-	MATTER_ATTR_CLUSTER_REVISION,
-	MATTER_ATTR_ATTRIBUTE_LIST,
-	MATTER_ATTR_ACCEPTED_CMD_LIST,
-	MATTER_ATTR_GENERATED_CMD_LIST,
-};
-
-static const uint32_t k_uwb_presence_attrs[] = {
-	MATTER_ATTR_UWB_DEVICE_IN_RANGE,
-	MATTER_ATTR_UWB_DISTANCE_MM,
-	MATTER_ATTR_UWB_DEVICE_ID,
-	MATTER_ATTR_UWB_UNLOCK_THRESHOLD_CM,
-	MATTER_ATTR_UWB_MOVEMENT_STATE,
-	MATTER_ATTR_UWB_APPROACH_CM,
-	MATTER_ATTR_UWB_RELOCK_CM,
-	MATTER_ATTR_UWB_MOTOR_MS,
-	MATTER_ATTR_UWB_DISTANCE_RELOCK,
-	MATTER_ATTR_UWB_BOUND_UNLOCK,
-	MATTER_ATTR_UWB_LOCK_RELOCK,
-	MATTER_ATTR_UWB_LOCK_UNLOCK,
-	MATTER_ATTR_FEATURE_MAP,
-	MATTER_ATTR_CLUSTER_REVISION,
-	MATTER_ATTR_ATTRIBUTE_LIST,
-	MATTER_ATTR_ACCEPTED_CMD_LIST,
-	MATTER_ATTR_GENERATED_CMD_LIST,
-};
-
-/*
- * What a wildcard read expands to for an accessor without Manage: the five
- * global attributes and nothing else.
- *
- * Not a second AttributeList. AttributeList still reports all seventeen,
- * because it describes the cluster rather than the accessor and a controller is
- * entitled to know which attribute it was refused. This array exists only so
- * that a wildcard SKIPS the gated twelve -- see list_attrs() and
- * uwb_presence_read_allowed().
- */
-static const uint32_t k_uwb_presence_public_attrs[] = {
-	MATTER_ATTR_FEATURE_MAP,
-	MATTER_ATTR_CLUSTER_REVISION,
-	MATTER_ATTR_ATTRIBUTE_LIST,
-	MATTER_ATTR_ACCEPTED_CMD_LIST,
-	MATTER_ATTR_GENERATED_CMD_LIST,
-};
-#endif
-
-#if MATTER_FEATURE_CLIENT
-/*
- * The manufacturer-specific PIN attribute is deliberately NOT in this list.
- *
- * Its id depends on info->vendor_id and so could not sit in a static array
- * anyway, but the reason to leave it out is the better one: it never reads back
- * (see matter_binding_read_pin), and an AttributeList naming an attribute whose
- * every read is empty invites a controller to keep asking a question this node
- * has already decided not to answer.
- */
-static const uint32_t k_binding_attrs[] = {
-	MATTER_ATTR_BINDING_LIST,
-	MATTER_ATTR_FEATURE_MAP,
-	MATTER_ATTR_CLUSTER_REVISION,
-	MATTER_ATTR_ATTRIBUTE_LIST,
-	MATTER_ATTR_ACCEPTED_CMD_LIST,
-	MATTER_ATTR_GENERATED_CMD_LIST,
-};
-#endif
 
 /** An array attribute whose members are bare unsigned ids; NULL/0 is legal
  * and encodes the empty list, which is how a cluster says "no commands". */
@@ -1115,176 +804,16 @@ static void lock_attr_value(const struct matter_device_info *info, uint32_t clus
 		}
 	}
 
-#if MATTER_FEATURE_CLIENT
-	if (cluster == MATTER_CLUSTER_BINDING) {
-		/*
-		 * The list first, so a node whose vendor id is still 0 cannot
-		 * have MATTER_ATTR_BINDING_PIN(0) -- which is 0x0000 -- shadow
-		 * the standard attribute that shares that number.
-		 */
-		if (attribute == MATTER_ATTR_BINDING_LIST) {
-			/*
-			 * Zero means every fabric. A controller building its
-			 * device model reads wildcards unfiltered, and a
-			 * fabric-scoped list that answered those with one
-			 * fabric's entries would describe this cluster as empty
-			 * to everybody who did not already know what to ask
-			 * for. Nothing is protected by refusing: the privilege
-			 * gate above already required Administer, and a peer
-			 * holding that can write this list and unlock the door.
-			 */
-			matter_binding_read(&info->binding,
-					    fabric_filtered ? info->accessing_fabric_index : 0u,
-					    w, tag);
-			return;
-		}
-		if (info->vendor_id != 0u &&
-		    attribute == MATTER_ATTR_BINDING_PIN(info->vendor_id)) {
-			matter_binding_read_pin(&info->binding, w, tag);
-			return;
-		}
-		switch (attribute) {
-		case MATTER_ATTR_FEATURE_MAP:
-			/* The cluster defines no features. */
-			(void)matter_tlv_put_u64(w, tag, 0u);
-			return;
-		case MATTER_ATTR_CLUSTER_REVISION:
-			(void)matter_tlv_put_u64(w, tag, MATTER_BINDING_CLUSTER_REV);
-			return;
-		case MATTER_ATTR_ATTRIBUTE_LIST:
-			put_id_list(w, tag, k_binding_attrs,
-				    sizeof(k_binding_attrs) / sizeof(k_binding_attrs[0]));
-			return;
-		case MATTER_ATTR_ACCEPTED_CMD_LIST:
-		case MATTER_ATTR_GENERATED_CMD_LIST:
-			/* A list and nothing else: the cluster has no commands. */
-			put_id_list(w, tag, NULL, 0u);
-			return;
-		default:
-			return;
-		}
-	}
-#endif
-
-#if TINYMATTER_VENDOR_CLUSTERS
-	if (cluster == MATTER_CLUSTER_APPROACH_DIRECTION) {
-		switch (attribute) {
-		case MATTER_ATTR_APPROACH_DIRECTION:
-			(void)matter_tlv_put_u64(w, tag, info->approach_direction);
-			return;
-		case MATTER_ATTR_FEATURE_MAP:
-			(void)matter_tlv_put_u64(w, tag, 0u);
-			return;
-		case MATTER_ATTR_CLUSTER_REVISION:
-			(void)matter_tlv_put_u64(w, tag, MATTER_APPROACH_DIRECTION_CLUSTER_REV);
-			return;
-		case MATTER_ATTR_ATTRIBUTE_LIST:
-			put_id_list(w, tag, k_approach_attrs,
-				    sizeof(k_approach_attrs) / sizeof(k_approach_attrs[0]));
-			return;
-		case MATTER_ATTR_ACCEPTED_CMD_LIST:
-		case MATTER_ATTR_GENERATED_CMD_LIST:
-			/* Three attributes and nothing else: no commands. */
-			put_id_list(w, tag, NULL, 0u);
-			return;
-		default:
-			return;
-		}
-	}
-
-	if (cluster == MATTER_CLUSTER_UWB_PRESENCE) {
-		/*
-		 * attr_status() has already refused this read, and put_report()
-		 * does not call here after a refusal. Repeated all the same,
-		 * because this function is what actually copies presence into a
-		 * report: a caller that reaches it without asking status first
-		 * would publish the telemetry, and there is no way to tell from
-		 * in here that it did. Null keeps the one-element contract this
-		 * function owes its writer.
-		 */
-		if (!uwb_presence_read_allowed(info, attribute)) {
-			(void)matter_tlv_put_null(w, tag);
-			return;
-		}
-		switch (attribute) {
-		case MATTER_ATTR_UWB_DEVICE_IN_RANGE:
-			(void)matter_tlv_put_bool(w, tag, info->uwb_device_in_range);
-			return;
-		case MATTER_ATTR_UWB_DISTANCE_MM:
-			if (info->uwb_device_in_range && info->uwb_distance_mm >= 0) {
-				(void)matter_tlv_put_u64(w, tag, (uint32_t)info->uwb_distance_mm);
-			} else {
-				(void)matter_tlv_put_null(w, tag);
-			}
-			return;
-		case MATTER_ATTR_UWB_DEVICE_ID:
-			(void)matter_tlv_put_u64(w, tag, info->uwb_device_id);
-			return;
-		case MATTER_ATTR_UWB_UNLOCK_THRESHOLD_CM:
-			(void)matter_tlv_put_u64(w, tag, info->uwb_config.unlock_cm);
-			return;
-		case MATTER_ATTR_UWB_MOVEMENT_STATE:
-			(void)matter_tlv_put_u64(w, tag, info->uwb_movement_state);
-			return;
-		case MATTER_ATTR_UWB_APPROACH_CM:
-			(void)matter_tlv_put_u64(w, tag, info->uwb_config.approach_cm);
-			return;
-		case MATTER_ATTR_UWB_RELOCK_CM:
-			(void)matter_tlv_put_u64(w, tag, info->uwb_config.relock_cm);
-			return;
-		case MATTER_ATTR_UWB_MOTOR_MS:
-			(void)matter_tlv_put_u64(w, tag, info->uwb_config.motor_ms);
-			return;
-		case MATTER_ATTR_UWB_DISTANCE_RELOCK:
-			(void)matter_tlv_put_bool(w, tag,
-						  (info->uwb_config.policy_flags &
-						   MATTER_UWB_POLICY_BOUND_RELOCK) != 0u);
-			return;
-		case MATTER_ATTR_UWB_BOUND_UNLOCK:
-			(void)matter_tlv_put_bool(w, tag,
-						  (info->uwb_config.policy_flags &
-						   MATTER_UWB_POLICY_BOUND_UNLOCK) != 0u);
-			return;
-		case MATTER_ATTR_UWB_LOCK_RELOCK:
-			(void)matter_tlv_put_bool(w, tag,
-						  (info->uwb_config.policy_flags &
-						   MATTER_UWB_POLICY_LOCK_RELOCK) != 0u);
-			return;
-		case MATTER_ATTR_UWB_LOCK_UNLOCK:
-			(void)matter_tlv_put_bool(w, tag,
-						  (info->uwb_config.policy_flags &
-						   MATTER_UWB_POLICY_LOCK_UNLOCK) != 0u);
-			return;
-		case MATTER_ATTR_FEATURE_MAP:
-			(void)matter_tlv_put_u64(w, tag, 0u);
-			return;
-		case MATTER_ATTR_CLUSTER_REVISION:
-			(void)matter_tlv_put_u64(w, tag, MATTER_UWB_PRESENCE_CLUSTER_REV);
-			return;
-		case MATTER_ATTR_ATTRIBUTE_LIST:
-			put_id_list(w, tag, k_uwb_presence_attrs,
-				    sizeof(k_uwb_presence_attrs) / sizeof(k_uwb_presence_attrs[0]));
-			return;
-		case MATTER_ATTR_ACCEPTED_CMD_LIST:
-		case MATTER_ATTR_GENERATED_CMD_LIST:
-			put_id_list(w, tag, NULL, 0u);
-			return;
-		default:
-			return;
-		}
-	}
-#endif
-
 	if (cluster != MATTER_CLUSTER_DOOR_LOCK) {
 		return;
 	}
 
 	switch (attribute) {
 	case MATTER_ATTR_FEATURE_MAP:
-		(void)matter_tlv_put_u64(w, tag,
-					 MATTER_DL_FEATURE_ALIRO_PROVISIONING |
-						 MATTER_DL_FEATURE_ALIRO_BLE_UWB |
-						 MATTER_DL_FEATURE_USER);
+		/* No features: claiming PIN, RFID, schedules or users would commit
+		 * this node to the whole credential and schedule surface, none of
+		 * which it has. */
+		(void)matter_tlv_put_u64(w, tag, 0u);
 		return;
 	case MATTER_ATTR_CLUSTER_REVISION:
 		(void)matter_tlv_put_u64(w, tag, MATTER_DL_CLUSTER_REVISION);
@@ -1297,17 +826,7 @@ static void lock_attr_value(const struct matter_device_info *info, uint32_t clus
 			    sizeof(k_lock_accepted_cmds) / sizeof(k_lock_accepted_cmds[0]));
 		return;
 	case MATTER_ATTR_GENERATED_CMD_LIST:
-		put_id_list(w, tag, k_lock_generated_cmds,
-			    sizeof(k_lock_generated_cmds) / sizeof(k_lock_generated_cmds[0]));
-		return;
-	case MATTER_ATTR_DL_USERS_MAX:
-		(void)matter_tlv_put_u64(w, tag, MATTER_DL_USERS_MAX);
-		return;
-	case MATTER_ATTR_DL_CREDS_PER_USER_MAX:
-		(void)matter_tlv_put_u64(w, tag, MATTER_DL_CREDS_PER_USER_MAX);
-		return;
-	case MATTER_ATTR_DL_CREDENTIAL_RULES:
-		(void)matter_tlv_put_u64(w, tag, MATTER_DL_CREDENTIAL_RULES);
+		put_id_list(w, tag, NULL, 0u);
 		return;
 	case MATTER_ATTR_DL_LOCK_STATE:
 		/*
@@ -1329,7 +848,7 @@ static void lock_attr_value(const struct matter_device_info *info, uint32_t clus
 		/*
 		 * False. There IS no actuator on this board, and claiming one
 		 * would invite a Lock/Unlock command this endpoint cannot
-		 * honour. The credential half is what this device is for.
+		 * honour.
 		 */
 		(void)matter_tlv_put_bool(w, tag, false);
 		return;
@@ -1345,63 +864,10 @@ static void lock_attr_value(const struct matter_device_info *info, uint32_t clus
 	case MATTER_ATTR_DL_SUPPORTED_OPERATING_MODES:
 		(void)matter_tlv_put_u64(w, tag, MATTER_DL_SUPPORTED_OPERATING_MODES);
 		return;
-
-	/*
-	 * ---- the credential reader configuration -------------------------------
-	 *
-	 * NULL until SetAliroReaderConfig arrives, which is exactly what tells
-	 * a controller this reader is unprovisioned and needs an identity.
-	 * Reporting zeros instead would claim a key that cannot verify.
-	 */
-	case MATTER_ATTR_DL_ALIRO_VERIFICATION_KEY:
-		if (info->have_aliro_reader_config) {
-			(void)matter_tlv_put_bytes(w, tag, info->aliro_verification_key,
-						   MATTER_ALIRO_VERIFICATION_KEY_LEN);
-		} else {
-			(void)matter_tlv_put_null(w, tag);
-		}
-		return;
-	case MATTER_ATTR_DL_ALIRO_GROUP_ID:
-		if (info->have_aliro_reader_config) {
-			(void)matter_tlv_put_bytes(w, tag, info->aliro_group_id,
-						   MATTER_ALIRO_GROUP_ID_LEN);
-		} else {
-			(void)matter_tlv_put_null(w, tag);
-		}
-		return;
-	case MATTER_ATTR_DL_ALIRO_GROUP_RESOLVING_KEY:
-		if (info->have_aliro_group_resolving_key) {
-			(void)matter_tlv_put_bytes(w, tag, info->aliro_group_resolving_key,
-						   MATTER_ALIRO_GROUP_ID_LEN);
-		} else {
-			(void)matter_tlv_put_null(w, tag);
-		}
-		return;
-	case MATTER_ATTR_DL_ALIRO_GROUP_SUB_ID:
-		/* Not nullable and not provisioned: it identifies the reader
-		 * GROUP this device belongs to, which it has before any
-		 * controller talks to it. The port supplies it. */
-		(void)matter_tlv_put_bytes(w, tag, info->aliro_group_sub_id,
-					   MATTER_ALIRO_GROUP_ID_LEN);
-		return;
-	case MATTER_ATTR_DL_ALIRO_EXPEDITED_VERSIONS:
-	case MATTER_ATTR_DL_ALIRO_BLE_UWB_VERSIONS:
-		put_protocol_version_list(w, tag);
-		return;
-	case MATTER_ATTR_DL_ALIRO_BLE_ADV_VERSION:
-		(void)matter_tlv_put_u64(w, tag, MATTER_ALIRO_BLE_ADV_VERSION);
-		return;
-	case MATTER_ATTR_DL_ALIRO_ISSUER_KEYS_MAX:
-		(void)matter_tlv_put_u64(w, tag, MATTER_ALIRO_ISSUER_KEYS_SUPPORTED);
-		return;
-	case MATTER_ATTR_DL_ALIRO_ENDPOINT_KEYS_MAX:
-		(void)matter_tlv_put_u64(w, tag, MATTER_ALIRO_ENDPOINT_KEYS_SUPPORTED);
-		return;
 	default:
 		return;
 	}
 }
-
 /**
  * Retrieve the value of an attribute on a given endpoint and cluster. Encodes the value into the
  * TLV writer using the supplied tag. Handles root and lock endpoints, multiple cluster types
@@ -1849,11 +1315,6 @@ static void attr_value(void *ctx, uint16_t endpoint, uint32_t cluster, uint32_t 
  * here that attr_status() refuses turns a wildcard into a report full of
  * UNSUPPORTED_ATTRIBUTE, which is worse than the silence it replaced.
  *
- * One list is not static for that reason. UWB presence is the one cluster whose
- * reads are privilege-gated, so what attr_status() answers SUCCESS for there
- * depends on WHO is asking; list_attrs() picks the matching array per accessor
- * rather than naming ids that same accessor is about to be refused.
- *
  * The global attributes (FeatureMap 0xFFFC, ClusterRevision 0xFFFD and the
  * rest) are deliberately absent. Nothing has asked for them, and a wildcard
  * that names them commits this node to answering them individually too.
@@ -1892,8 +1353,8 @@ static const uint32_t k_desc_attrs[] = {
 	MATTER_ATTR_DESC_PARTS_LIST,
 };
 
-/* k_lock_attrs and k_approach_attrs live above lock_attr_value(), which
- * serves them as AttributeList; they belong to this section all the same. */
+/* k_lock_attrs lives above lock_attr_value(), which serves it as
+ * AttributeList; it belongs to this section all the same. */
 
 static const uint32_t k_ac_attrs[] = {
 	MATTER_ATTR_AC_ACL,
@@ -1963,9 +1424,6 @@ static size_t list_clusters(void *ctx, uint16_t endpoint, const uint32_t **out)
  */
 static size_t list_attrs(void *ctx, uint16_t endpoint, uint32_t cluster, const uint32_t **out)
 {
-#if TINYMATTER_VENDOR_CLUSTERS
-	const struct matter_device_info *info = (const struct matter_device_info *)ctx;
-#endif
 
 	if (endpoint == MATTER_ENDPOINT_LOCK) {
 		if (cluster == MATTER_CLUSTER_DESCRIPTOR) {
@@ -1976,40 +1434,6 @@ static size_t list_attrs(void *ctx, uint16_t endpoint, uint32_t cluster, const u
 			*out = k_lock_attrs;
 			return sizeof(k_lock_attrs) / sizeof(k_lock_attrs[0]);
 		}
-#if TINYMATTER_VENDOR_CLUSTERS
-		if (cluster == MATTER_CLUSTER_APPROACH_DIRECTION) {
-			*out = k_approach_attrs;
-			return sizeof(k_approach_attrs) / sizeof(k_approach_attrs[0]);
-		}
-		if (cluster == MATTER_CLUSTER_UWB_PRESENCE) {
-			/*
-			 * The gated twelve come out of the wildcard list for an
-			 * accessor that may not read them. This is the coupling
-			 * the comment above k_gc_attrs states, in its second
-			 * form: expand_on_endpoint() emits every id this returns
-			 * and put_report() then asks attr_status() about each,
-			 * so an id here that attr_status() refuses becomes an
-			 * UNSUPPORTED_ACCESS entry in the report rather than an
-			 * absence. Matter expects a wildcard to skip what the
-			 * accessor cannot have and a CONCRETE path to be told
-			 * why -- returning the shorter list here is what makes
-			 * the first half true.
-			 */
-			if (!uwb_presence_read_allowed(info, MATTER_ATTR_UWB_DEVICE_IN_RANGE)) {
-				*out = k_uwb_presence_public_attrs;
-				return sizeof(k_uwb_presence_public_attrs) /
-				       sizeof(k_uwb_presence_public_attrs[0]);
-			}
-			*out = k_uwb_presence_attrs;
-			return sizeof(k_uwb_presence_attrs) / sizeof(k_uwb_presence_attrs[0]);
-		}
-#endif
-#if MATTER_FEATURE_CLIENT
-		if (cluster == MATTER_CLUSTER_BINDING) {
-			*out = k_binding_attrs;
-			return sizeof(k_binding_attrs) / sizeof(k_binding_attrs[0]);
-		}
-#endif
 		return 0u;
 	}
 	if (endpoint != MATTER_ENDPOINT_ROOT) {
@@ -2105,52 +1529,6 @@ static bool field_u64(const struct matter_im_invoke *inv, uint8_t tag, uint64_t 
 
 /* UpdateFabricLabel's one argument. */
 #define TAG_UPDATE_LABEL 0u
-
-/** Borrow one octet-string field out of a command's arguments. */
-/**
- * Read an unsigned field from INSIDE a nested structure field.
- *
- * SetCredential carries the credential type one level down, in a
- * CredentialStruct under field 1. Reading tag 0 at the top level instead finds
- * OperationType, which is also a small unsigned and decodes perfectly -- so
- * getting this wrong installs a credential key as whatever operation type happened
- * to be sent, with nothing to report.
- */
-static bool field_struct_u64(const struct matter_im_invoke *inv, uint8_t outer, uint8_t inner,
-			     uint64_t *out)
-{
-	struct matter_tlv_reader r;
-
-	if (!inv->has_fields || inv->fields == NULL) {
-		return false;
-	}
-	matter_tlv_reader_init(&r, inv->fields, inv->fields_len);
-	if (matter_tlv_next(&r) != MATTER_OK || matter_tlv_enter(&r) != MATTER_OK) {
-		return false;
-	}
-	for (;;) {
-		int rc = matter_tlv_next(&r);
-
-		if (rc != MATTER_OK) {
-			return false;
-		}
-		if (matter_tlv_tag(&r) != MATTER_TLV_CTX(outer)) {
-			continue;
-		}
-		if (!matter_tlv_is_container(&r) || matter_tlv_enter(&r) != MATTER_OK) {
-			return false;
-		}
-		for (;;) {
-			rc = matter_tlv_next(&r);
-			if (rc != MATTER_OK) {
-				return false;
-			}
-			if (matter_tlv_tag(&r) == MATTER_TLV_CTX(inner)) {
-				return matter_tlv_get_u64(&r, out) == MATTER_OK;
-			}
-		}
-	}
-}
 
 /**
  * Extract a bytes field from the TLV-encoded command fields by tag. Searches the structure for the
@@ -2807,8 +2185,7 @@ static uint8_t add_noc(struct matter_device_info *info, const struct matter_im_i
  * Out of line on purpose. Its frame is about 400 bytes of scratch, and the
  * optimiser folding it into command() put that under every other command too:
  * MEASURED 2026-10-05, command()'s frame went from 144 to 456 bytes after an
- * unrelated change tipped the inliner. SetCredential runs under command() and
- * goes on to copy a whole trust store onto the same stack.
+ * unrelated change tipped the inliner.
  */
 static __attribute__((noinline)) uint8_t opcred_command(struct matter_device_info *info,
 							const struct matter_im_invoke *inv,
@@ -2944,12 +2321,6 @@ static __attribute__((noinline)) uint8_t opcred_command(struct matter_device_inf
 		 * cleaning up after itself -- arm no fail-safe first. A full
 		 * table whose orphaned owners can never be removed leaves a
 		 * factory wipe as the only way to commission again.
-		 *
-		 * Portable removal does not guess which credential anchor belongs to
-		 * this fabric. Anchors are named by credential index and do not record
-		 * their installing fabric. The owning port may still clear the whole
-		 * Home Key trust store when this is the last fabric, as the DWM app
-		 * does inside its durable-store hook.
 		 */
 		if (!field_u64(inv, TAG_REMOVE_FABRIC_INDEX, &v)) {
 			return MATTER_IM_STATUS_INVALID_COMMAND;
@@ -3089,286 +2460,6 @@ static void opcred_fields(const struct matter_device_info *info, uint32_t respon
 }
 
 /**
- * SetAliroReaderConfig: the reader identity, delivered by Apple Home.
- *
- * This is the point of the whole Matter node. Until now the reader's private
- * key was a build-time Kconfig string, so every image carried one identity and
- * only unlocked for the phones in whoever built it. This command is how a
- * device gets its own.
- *
- * NOTHING HERE IS LOGGED. Every field is key material, and the signing key is
- * not even kept in this struct: it goes straight to the port's callback, which
- * persists it, and is wiped from the stack on the way out.
- *
- * The group resolving key is optional in the schema but not here: this node
- * claims the BLE-UWB feature, and that is exactly the bit that makes it
- * mandatory. Accepting a config without it would leave the reader unable to
- * resolve the group it was just told it belongs to.
- */
-/*
- * Does (type, index) already hold a key other than @p key?
- *
- * Its own frame on purpose: the 65 bytes the stored key is read into are gone
- * before SetCredential calls the store, which copies a whole trust store onto
- * the same stack.
- */
-static __attribute__((noinline)) bool credential_index_taken(const struct matter_device_info *info,
-							     uint8_t type, uint16_t index,
-							     const uint8_t *key)
-{
-	uint8_t held[MATTER_ALIRO_VERIFICATION_KEY_LEN];
-
-	return info->aliro_credential_lookup_cb != NULL &&
-	       info->aliro_credential_lookup_cb(type, index, held) >= 0 &&
-	       memcmp(held, key, sizeof(held)) != 0;
-}
-
-/**
- * SetCredential: the credential trust anchor.
- *
- * The reader identity says who this device IS; this says whose key it will
- * open for. Without it a provisioned reader still holds 0 trust anchors and
- * no phone can unlock it, which is the last functional gap before a walk-up.
- *
- * The key is handed to the port unchanged and NOT stored here: the reader's
- * own trust store owns it, decides whether it is a valid P-256 point, and
- * persists it. Duplicating it in this struct would be a second copy of a
- * secret with no reader to use it.
- *
- * The response is REQUIRED even for a refusal -- SetCredential is answered
- * with SetCredentialResponse carrying a status, not with a bare command
- * status, and a controller that gets the wrong shape treats it as no answer.
- */
-static uint8_t set_credential(struct matter_device_info *info, const struct matter_im_invoke *inv,
-			      uint32_t *response_command)
-{
-	const uint8_t *data = NULL;
-	size_t data_len = 0u;
-	uint64_t user_index = 0u;
-	uint64_t cred_type = 0u;
-
-	*response_command = MATTER_CMD_DL_SET_CREDENTIAL_RESPONSE;
-	info->last_credential_status = MATTER_IM_STATUS_FAILURE;
-	info->last_user_index = 0u;
-
-	/* The type lives inside the nested CredentialStruct, not beside it. */
-	if (!field_struct_u64(inv, TAG_SETCRED_CREDENTIAL, TAG_CREDSTRUCT_TYPE, &cred_type) ||
-	    !field_bytes(inv, TAG_SETCRED_DATA, &data, &data_len)) {
-		info->last_credential_status = MATTER_IM_STATUS_INVALID_COMMAND;
-		return MATTER_IM_STATUS_SUCCESS;
-	}
-	if (cred_type != MATTER_DL_CRED_ALIRO_ISSUER_KEY &&
-	    cred_type != MATTER_DL_CRED_ALIRO_EVICTABLE_ENDPOINT &&
-	    cred_type != MATTER_DL_CRED_ALIRO_ENDPOINT_KEY) {
-		/* PIN, RFID, fingerprint, face: surfaces this node does not
-		 * claim, so refusing is the truthful answer rather than storing
-		 * something the reader can never use. */
-		info->last_credential_status = MATTER_IM_STATUS_UNSUPPORTED_COMMAND;
-		return MATTER_IM_STATUS_SUCCESS;
-	}
-	if (data_len != MATTER_ALIRO_VERIFICATION_KEY_LEN) {
-		info->last_credential_status = MATTER_IM_STATUS_CONSTRAINT_ERROR;
-		return MATTER_IM_STATUS_SUCCESS;
-	}
-	/*
-	 * Both indices are read BEFORE the store is told, because they are the
-	 * only handle a later ClearCredential or ClearUser has on this key --
-	 * neither command carries key bytes. An absent field stays 0, which the
-	 * store reads as "no Matter index" and refuses to match.
-	 */
-	uint64_t cred_index = 0u;
-	bool have_user_index;
-
-	(void)field_struct_u64(inv, TAG_SETCRED_CREDENTIAL, TAG_CREDSTRUCT_INDEX, &cred_index);
-	have_user_index = field_u64(inv, TAG_SETCRED_USER_INDEX, &user_index);
-	if (cred_index > 0xFFFFu || user_index > 0xFFFFu) {
-		/* TLV carries these as unsigned integers of any width, and the
-		 * store's are 16-bit. Truncating would bind the anchor to an index
-		 * the admin never sent -- 0x10001 becomes 1 -- and a later
-		 * ClearCredential(1) would then revoke somebody else's key.
-		 * ClearCredential refuses an out-of-range index the same way. */
-		info->last_credential_status = MATTER_IM_STATUS_INVALID_COMMAND;
-		return MATTER_IM_STATUS_SUCCESS;
-	}
-	/*
-	 * One key per index. An index is the only name ClearCredential has for
-	 * a key, so a second key bound to one that is taken would leave a
-	 * revocation ambiguous -- found on hardware as a phone and a Watch both
-	 * filed under index 1. Add leaves the key that is there and says
-	 * Occupied, which is what tells the controller to pick another index;
-	 * Modify replaces it, which is what Modify means.
-	 */
-	if (credential_index_taken(info, (uint8_t)cred_type, (uint16_t)cred_index, data)) {
-		uint64_t op = 0u;
-
-		(void)field_u64(inv, TAG_SETCRED_OPERATION, &op);
-		if (op != MATTER_DL_DATA_OP_MODIFY) {
-			info->last_credential_status = MATTER_DL_STATUS_OCCUPIED;
-			return MATTER_IM_STATUS_SUCCESS;
-		}
-		if (info->aliro_credential_clear_cb == NULL ||
-		    info->aliro_credential_clear_cb((uint8_t)cred_type,
-							    (uint16_t)cred_index) != 0) {
-			return MATTER_IM_STATUS_SUCCESS; /* status stays FAILURE */
-		}
-	}
-	if (have_user_index) {
-		info->last_user_index = (uint16_t)user_index;
-	}
-	if (info->aliro_credential_cb == NULL ||
-	    info->aliro_credential_cb((uint8_t)cred_type, data, (uint16_t)cred_index,
-				      (uint16_t)user_index) < 0) {
-		info->last_user_index = 0u;      /* nothing was stored to attribute */
-		return MATTER_IM_STATUS_SUCCESS; /* status stays FAILURE */
-	}
-	info->last_credential_status = MATTER_IM_STATUS_SUCCESS;
-	return MATTER_IM_STATUS_SUCCESS;
-}
-
-/**
- * Decode and store credential reader configuration: signing key, verification key (P-256 public),
- * group ID, and group-resolving key. Validate all field lengths exactly, call the registered config
- * hook to persist them, and store copies in the device info structure. Return a status code.
- */
-static uint8_t set_aliro_reader_config(struct matter_device_info *info,
-				       const struct matter_im_invoke *inv)
-{
-	const uint8_t *signing = NULL;
-	const uint8_t *verification = NULL;
-	const uint8_t *group_id = NULL;
-	const uint8_t *grk = NULL;
-	size_t signing_len = 0u;
-	size_t verification_len = 0u;
-	size_t group_id_len = 0u;
-	size_t grk_len = 0u;
-
-	if (!field_bytes(inv, TAG_ALIRO_CFG_SIGNING_KEY, &signing, &signing_len) ||
-	    !field_bytes(inv, TAG_ALIRO_CFG_VERIFICATION_KEY, &verification, &verification_len) ||
-	    !field_bytes(inv, TAG_ALIRO_CFG_GROUP_ID, &group_id, &group_id_len)) {
-		return MATTER_IM_STATUS_INVALID_COMMAND;
-	}
-	/*
-	 * Lengths are checked before anything is copied, and checked exactly:
-	 * a 64-byte "P-256 public key" is a different thing from a 65-byte one
-	 * and would be stored happily by a length-tolerant reader.
-	 */
-	if (signing_len != MATTER_ALIRO_SIGNING_KEY_LEN ||
-	    verification_len != MATTER_ALIRO_VERIFICATION_KEY_LEN ||
-	    group_id_len != MATTER_ALIRO_GROUP_ID_LEN) {
-		return MATTER_IM_STATUS_CONSTRAINT_ERROR;
-	}
-	if (!field_bytes(inv, TAG_ALIRO_CFG_GROUP_RESOLVING_KEY, &grk, &grk_len) ||
-	    grk_len != MATTER_ALIRO_GROUP_ID_LEN) {
-		return MATTER_IM_STATUS_CONSTRAINT_ERROR;
-	}
-
-	if (info->aliro_reader_config_cb == NULL) {
-		/* No store to write to. Reporting success would claim an
-		 * identity was kept that will be gone at the next boot. */
-		return MATTER_IM_STATUS_FAILURE;
-	}
-	if (info->aliro_reader_config_cb(signing, verification, group_id, grk) != 0) {
-		return MATTER_IM_STATUS_FAILURE;
-	}
-
-	memcpy(info->aliro_verification_key, verification, MATTER_ALIRO_VERIFICATION_KEY_LEN);
-	memcpy(info->aliro_group_id, group_id, MATTER_ALIRO_GROUP_ID_LEN);
-	memcpy(info->aliro_group_resolving_key, grk, MATTER_ALIRO_GROUP_ID_LEN);
-	info->have_aliro_group_resolving_key = true;
-	info->have_aliro_reader_config = true;
-	return MATTER_IM_STATUS_SUCCESS;
-}
-
-/**
- * ClearCredential (0x0026): stop honouring one credential, every credential of one type, or
- * every credential there is.
- *
- * The command names its target by (type, index) and never by key, so this is only answerable
- * because SetCredential recorded the index the key was installed under. An absent or null
- * Credential field means all types (door-lock-server.cpp:1021-1025); index 0xFFFE means all of the
- * named type (:1040-1044).
- *
- * FAILURE rather than SUCCESS whenever the port could not make the removal stick. An admin who is
- * told a key was removed stops looking, so a removal that would come back on the next boot must not
- * be reported as done. "Nothing carried that index" is NOT such a case: the named credential is not
- * trusted either way, and the reference server answers a clear of an unoccupied slot with success
- * too (:3025-3029).
- */
-static uint8_t clear_credential(struct matter_device_info *info, const struct matter_im_invoke *inv)
-{
-	uint64_t cred_type = 0u;
-	uint64_t cred_index = 0u;
-
-	if (info->aliro_credential_clear_cb == NULL) {
-		return MATTER_IM_STATUS_FAILURE;
-	}
-	if (!field_struct_u64(inv, TAG_CLEARCRED_CREDENTIAL, TAG_CREDSTRUCT_TYPE, &cred_type)) {
-		/* Null or absent: every credential of every type. Type 0 is not a
-		 * credential type, which is what makes it usable as that flag. */
-		return info->aliro_credential_clear_cb(0u, MATTER_DL_INDEX_ALL) == 0
-			       ? MATTER_IM_STATUS_SUCCESS
-			       : MATTER_IM_STATUS_FAILURE;
-	}
-	if (cred_type != MATTER_DL_CRED_ALIRO_ISSUER_KEY &&
-	    cred_type != MATTER_DL_CRED_ALIRO_EVICTABLE_ENDPOINT &&
-	    cred_type != MATTER_DL_CRED_ALIRO_ENDPOINT_KEY) {
-		/* Same answer SetCredential gives for a type this node never
-		 * claimed: it cannot be holding one to clear. */
-		return MATTER_IM_STATUS_INVALID_COMMAND;
-	}
-	if (!field_struct_u64(inv, TAG_CLEARCRED_CREDENTIAL, TAG_CREDSTRUCT_INDEX, &cred_index) ||
-	    cred_index == 0u || cred_index > 0xFFFFu) {
-		/* Indices are 1-based, so 0 is not a slot this lock could hold. */
-		return MATTER_IM_STATUS_INVALID_COMMAND;
-	}
-	return info->aliro_credential_clear_cb((uint8_t)cred_type, (uint16_t)cred_index) == 0
-		       ? MATTER_IM_STATUS_SUCCESS
-		       : MATTER_IM_STATUS_FAILURE;
-}
-
-/**
- * ClearUser (0x001D): forget a user slot and every credential bound to it.
- *
- * Answered because a controller may remove a person without ever naming their credentials -- the
- * reference server clears a user's credentials as part of clearing the user
- * (door-lock-server.cpp:2109-2135). A node that dropped the user row and kept the credential would
- * report an empty slot while still opening for the phone in it.
- *
- * The row is cleared before the port is called and stays cleared even when the port reports a
- * failure, because the failure means "not persisted", not "still trusted": the credential is
- * already untrusted in RAM by then, and a user row that outlived it would be the lie.
- *
- * A port that registered no hook is the other way round, which is why the check comes first: no
- * removal was attempted, the credential is still trusted, and emptying the row would leave the
- * controller reading an empty slot whose key still opens the door. ClearCredential refuses the
- * same way.
- */
-static uint8_t clear_user(struct matter_device_info *info, const struct matter_im_invoke *inv)
-{
-	uint64_t idx = 0u;
-	int users_rc;
-
-	if (!field_u64(inv, TAG_CLEARUSER_INDEX, &idx) || idx == 0u ||
-	    (idx > MATTER_DL_USERS_MAX && idx != MATTER_DL_INDEX_ALL)) {
-		return MATTER_IM_STATUS_INVALID_COMMAND;
-	}
-	if (info->aliro_user_clear_cb == NULL) {
-		return MATTER_IM_STATUS_FAILURE;
-	}
-	if (idx == MATTER_DL_INDEX_ALL) {
-		memset(info->users, 0, sizeof(info->users));
-	} else {
-		memset(&info->users[idx - 1u], 0, sizeof(info->users[0]));
-	}
-	/* Both halves are attempted whatever the other returns: a row that
-	 * could not be stored as cleared must still lose its credentials. */
-	users_rc = users_store(info);
-	return info->aliro_user_clear_cb((uint16_t)idx) == 0 && users_rc == MATTER_OK
-		       ? MATTER_IM_STATUS_SUCCESS
-		       : MATTER_IM_STATUS_FAILURE;
-}
-
-/**
  * True when @p index names a fabric this node has COMMITTED (not merely staged
  * inside a live fail-safe). Used to decide whether a repeated
  * CommissioningComplete is a retransmission of one that already succeeded.
@@ -3414,7 +2505,7 @@ static uint8_t command(void *ctx, const struct matter_im_invoke *inv, uint32_t *
 			return MATTER_IM_STATUS_UNSUPPORTED_CLUSTER;
 		}
 		/* PASE, a removed fabric, and a provisional identity cannot operate
-		 * the lock or mutate its credential database. */
+		 * the lock. */
 		if (accessing_slot >= MATTER_SUPPORTED_FABRICS || info->accessing_node_id == 0u) {
 			return MATTER_IM_STATUS_UNSUPPORTED_ACCESS;
 		}
@@ -3454,110 +2545,6 @@ static uint8_t command(void *ctx, const struct matter_im_invoke *inv, uint32_t *
 					? MATTER_DL_LOCK_OP_UNLOCK
 					: MATTER_DL_LOCK_OP_LOCK,
 				MATTER_DL_OP_SOURCE_REMOTE, info->accessing_fabric_index, 0u);
-			return MATTER_IM_STATUS_SUCCESS;
-		}
-		if (!fabric_slot_has_privilege(info, accessing_slot,
-					 MATTER_AC_PRIVILEGE_ADMINISTER, MATTER_ENDPOINT_LOCK,
-					 MATTER_CLUSTER_DOOR_LOCK)) {
-			return MATTER_IM_STATUS_UNSUPPORTED_ACCESS;
-		}
-		if (inv->command == MATTER_CMD_DL_SET_ALIRO_READER_CONFIG) {
-			return set_aliro_reader_config(info, inv);
-		}
-		if (inv->command == MATTER_CMD_DL_SET_CREDENTIAL) {
-			return set_credential(info, inv, response_command);
-		}
-		if (inv->command == MATTER_CMD_DL_CLEAR_CREDENTIAL) {
-			return clear_credential(info, inv);
-		}
-		if (inv->command == MATTER_CMD_DL_CLEAR_USER) {
-			return clear_user(info, inv);
-		}
-		if (inv->command == MATTER_CMD_DL_SET_USER) {
-			/*
-			 * Stored, not merely accepted. Apple writes a user here
-			 * and reads it straight back with GetUser, so a node
-			 * that says SUCCESS and then reports an empty slot has
-			 * told the controller two different things about the
-			 * same user.
-			 *
-			 * OperationType is read but not distinguished: Add and
-			 * Modify differ only in whether the slot was already
-			 * occupied, and overwriting is the right answer to both
-			 * for a table that holds no credentials of its own yet.
-			 */
-			struct matter_user *u;
-			struct matter_user prev;
-			uint64_t idx = 0u;
-
-			if (!field_u64(inv, TAG_SETUSER_INDEX, &idx) || idx == 0u ||
-			    idx > MATTER_DL_USERS_MAX) {
-				return MATTER_IM_STATUS_INVALID_COMMAND;
-			}
-			u = &info->users[idx - 1u];
-			prev = *u;
-			u->in_use = true;
-			u->creator_fabric = info->accessing_fabric_index;
-			u->modifier_fabric = info->accessing_fabric_index;
-			u->unique_id = field_u64(inv, TAG_SETUSER_UNIQUE_ID, &v) ? (uint32_t)v : 0u;
-			u->status = field_u64(inv, TAG_SETUSER_STATUS, &v) ? (uint8_t)v : 1u;
-			u->type = field_u64(inv, TAG_SETUSER_TYPE, &v) ? (uint8_t)v : 0u;
-			u->credential_rule =
-				field_u64(inv, TAG_SETUSER_CREDENTIAL_RULE, &v) ? (uint8_t)v : 0u;
-			/*
-			 * Stored before SUCCESS, not after. The same controller
-			 * reads this row again after every reset of this node,
-			 * and an empty slot there is the contradiction above
-			 * arriving late: it answered one with RemoveFabric.
-			 */
-			if (users_store(info) != MATTER_OK) {
-				*u = prev;
-				return MATTER_IM_STATUS_FAILURE;
-			}
-			/* No response command: SetUser is answered with a bare
-			 * status, which the IM layer sends for SUCCESS. */
-			return MATTER_IM_STATUS_SUCCESS;
-		}
-		if (inv->command == MATTER_CMD_DL_GET_CREDENTIAL_STATUS) {
-			/*
-			 * Asked right after the reader identity lands, to find
-			 * out whether the credential about to be installed is
-			 * already here, and before every later key to find an
-			 * index that is free. Refusing the command ends the
-			 * pairing, exactly as refusing GetUser did, so a
-			 * request this cannot read is answered as an address
-			 * that holds nothing: type 0 names no credential.
-			 */
-			uint64_t idx = 0u;
-
-			v = 0u;
-			(void)field_struct_u64(inv, TAG_GETCREDSTATUS_CREDENTIAL,
-					       TAG_CREDSTRUCT_TYPE, &v);
-			(void)field_struct_u64(inv, TAG_GETCREDSTATUS_CREDENTIAL,
-					       TAG_CREDSTRUCT_INDEX, &idx);
-			info->last_credential_type = (v > 0xFFu || idx > 0xFFFFu) ? 0u : (uint8_t)v;
-			info->last_credential_index = (uint16_t)idx;
-			*response_command = MATTER_CMD_DL_GET_CREDENTIAL_STATUS_RESPONSE;
-			return MATTER_IM_STATUS_SUCCESS;
-		}
-		if (inv->command == MATTER_CMD_DL_GET_USER) {
-			/*
-			 * Answered because a real controller invokes it during
-			 * commissioning and gives up when it is refused -- it
-			 * reported "the specified action or command indicated
-			 * is not supported" and sent RemoveFabric.
-			 *
-			 * The answer is an EMPTY slot, which is the truth:
-			 * there is no user database here yet. UserIndex is
-			 * echoed and every other field is null, which is how
-			 * the spec says an unoccupied slot reads.
-			 */
-			if (!field_u64(inv, TAG_GETUSER_INDEX, &v) || v == 0u ||
-			    v > MATTER_DL_USERS_MAX) {
-				return MATTER_IM_STATUS_INVALID_COMMAND;
-			}
-			info->last_user_index = (uint16_t)v;
-			*response_command = MATTER_CMD_DL_GET_USER_RESPONSE;
 			return MATTER_IM_STATUS_SUCCESS;
 		}
 		return MATTER_IM_STATUS_UNSUPPORTED_COMMAND;
@@ -3751,54 +2738,10 @@ static uint8_t command(void *ctx, const struct matter_im_invoke *inv, uint32_t *
 	}
 }
 
-/*
- * GetCredentialStatusResponse: what the port's store holds at the address the
- * command named.
- *
- * This answered "does not exist" for everything, and a controller that asks in
- * order to find a free index then installed every endpoint key at index 1.
- *
- * The fabric indices stay null: the store records which user a key belongs to,
- * not which fabric installed it. CredentialData is omitted, not null, for an
- * address that holds nothing -- the answer every pairing so far was accepted
- * with -- and is the key itself otherwise.
- *
- * Its own frame, so the key it reads back costs stack only for this response
- * and not for every one command_fields() encodes.
- */
-static __attribute__((noinline)) void credential_status_fields(const struct matter_device_info *info,
-							       struct matter_tlv_writer *w,
-							       matter_tlv_tag_t tag)
-{
-	uint8_t key[MATTER_ALIRO_VERIFICATION_KEY_LEN];
-	int user = -1;
-
-	if (info->aliro_credential_lookup_cb != NULL) {
-		user = info->aliro_credential_lookup_cb(info->last_credential_type,
-								info->last_credential_index, key);
-	}
-	(void)matter_tlv_start_container(w, tag, MATTER_TLV_STRUCTURE);
-	(void)matter_tlv_put_bool(w, MATTER_TLV_CTX(TAG_CREDSTATUS_EXISTS), user >= 0);
-	if (user > 0) {
-		(void)matter_tlv_put_u64(w, MATTER_TLV_CTX(TAG_CREDSTATUS_USER_INDEX),
-					 (uint64_t)user);
-	} else {
-		(void)matter_tlv_put_null(w, MATTER_TLV_CTX(TAG_CREDSTATUS_USER_INDEX));
-	}
-	(void)matter_tlv_put_null(w, MATTER_TLV_CTX(TAG_CREDSTATUS_CREATOR_FABRIC));
-	(void)matter_tlv_put_null(w, MATTER_TLV_CTX(TAG_CREDSTATUS_MODIFIER_FABRIC));
-	(void)matter_tlv_put_null(w, MATTER_TLV_CTX(TAG_CREDSTATUS_NEXT_INDEX));
-	if (user >= 0) {
-		(void)matter_tlv_put_bytes(w, MATTER_TLV_CTX(TAG_CREDSTATUS_DATA), key, sizeof(key));
-	}
-	(void)matter_tlv_end_container(w);
-}
-
 /**
  * Encode the fields of a command response based on endpoint, cluster, and response command type.
- * Handles Door Lock SetCredentialResponse and GetCredentialStatusResponse on the lock endpoint, and
- * OperationalCredentials, NetworkCommissioning, and GeneralCommissioning responses on the root
- * endpoint.
+ * Handles OperationalCredentials, NetworkCommissioning, and GeneralCommissioning responses on the
+ * root endpoint.
  */
 static void command_fields(void *ctx, uint16_t endpoint, uint32_t cluster,
 			   uint32_t response_command, struct matter_tlv_writer *w,
@@ -3806,109 +2749,6 @@ static void command_fields(void *ctx, uint16_t endpoint, uint32_t cluster,
 {
 	const struct matter_device_info *info = (const struct matter_device_info *)ctx;
 
-	if (endpoint == MATTER_ENDPOINT_LOCK) {
-		if (cluster == MATTER_CLUSTER_DOOR_LOCK &&
-		    response_command == MATTER_CMD_DL_SET_CREDENTIAL_RESPONSE) {
-			(void)matter_tlv_start_container(w, tag, MATTER_TLV_STRUCTURE);
-			(void)matter_tlv_put_u64(w, MATTER_TLV_CTX(TAG_SETCREDRESP_STATUS),
-						 info->last_credential_status);
-			if (info->last_user_index != 0u) {
-				(void)matter_tlv_put_u64(w,
-							 MATTER_TLV_CTX(TAG_SETCREDRESP_USER_INDEX),
-							 info->last_user_index);
-			} else {
-				(void)matter_tlv_put_null(
-					w, MATTER_TLV_CTX(TAG_SETCREDRESP_USER_INDEX));
-			}
-			/* No next index: this node keeps no credential list to
-			 * walk, and a number here would invite a read of a slot
-			 * that does not exist. */
-			(void)matter_tlv_put_null(w, MATTER_TLV_CTX(TAG_SETCREDRESP_NEXT_INDEX));
-			(void)matter_tlv_end_container(w);
-			return;
-		}
-		if (cluster == MATTER_CLUSTER_DOOR_LOCK &&
-		    response_command == MATTER_CMD_DL_GET_CREDENTIAL_STATUS_RESPONSE) {
-			credential_status_fields(info, w, tag);
-			return;
-		}
-		if (cluster == MATTER_CLUSTER_DOOR_LOCK &&
-		    response_command == MATTER_CMD_DL_GET_USER_RESPONSE) {
-			/*
-			 * An unoccupied slot: the index that was asked for, and
-			 * null for everything that describes a user who is not
-			 * there. NextUserIndex is null too -- there is no next
-			 * occupied slot to walk to.
-			 *
-			 * The CommandFields STRUCTURE is opened here, by the
-			 * callee, exactly as opcred_fields and network_fields
-			 * do. Writing the fields bare puts them in the
-			 * CommandDataIB beside the path instead of inside it,
-			 * and the result is a response that encodes without
-			 * error, decodes as garbage, and is simply dropped.
-			 */
-			{
-				const struct matter_user *u =
-					&info->users[info->last_user_index - 1u];
-
-				(void)matter_tlv_start_container(w, tag, MATTER_TLV_STRUCTURE);
-				(void)matter_tlv_put_u64(w, MATTER_TLV_CTX(TAG_GETUSER_INDEX),
-							 info->last_user_index);
-				/* The name is never stored, so it is always null
-				 * -- which is a legal answer and not a claim
-				 * that the slot is empty. */
-				(void)matter_tlv_put_null(w, MATTER_TLV_CTX(TAG_GETUSER_NAME));
-				if (!u->in_use) {
-					(void)matter_tlv_put_null(
-						w, MATTER_TLV_CTX(TAG_GETUSER_UNIQUE_ID));
-					(void)matter_tlv_put_null(
-						w, MATTER_TLV_CTX(TAG_GETUSER_STATUS));
-					(void)matter_tlv_put_null(w,
-								  MATTER_TLV_CTX(TAG_GETUSER_TYPE));
-					(void)matter_tlv_put_null(
-						w, MATTER_TLV_CTX(TAG_GETUSER_CREDENTIAL_RULE));
-					(void)matter_tlv_put_null(
-						w, MATTER_TLV_CTX(TAG_GETUSER_CREATOR_FABRIC));
-					(void)matter_tlv_put_null(
-						w, MATTER_TLV_CTX(TAG_GETUSER_MODIFIER_FABRIC));
-				} else {
-					(void)matter_tlv_put_u64(
-						w, MATTER_TLV_CTX(TAG_GETUSER_UNIQUE_ID),
-						u->unique_id);
-					(void)matter_tlv_put_u64(
-						w, MATTER_TLV_CTX(TAG_GETUSER_STATUS), u->status);
-					(void)matter_tlv_put_u64(
-						w, MATTER_TLV_CTX(TAG_GETUSER_TYPE), u->type);
-					(void)matter_tlv_put_u64(
-						w, MATTER_TLV_CTX(TAG_GETUSER_CREDENTIAL_RULE),
-						u->credential_rule);
-					(void)matter_tlv_put_u64(
-						w, MATTER_TLV_CTX(TAG_GETUSER_CREATOR_FABRIC),
-						u->creator_fabric);
-					(void)matter_tlv_put_u64(
-						w, MATTER_TLV_CTX(TAG_GETUSER_MODIFIER_FABRIC),
-						u->modifier_fabric);
-				}
-				/* Credentials is a LIST, and an empty list is
-				 * not the same answer as null: null says the
-				 * slot is empty, empty says the user exists and
-				 * holds none. */
-				if (u->in_use) {
-					(void)matter_tlv_start_container(
-						w, MATTER_TLV_CTX(TAG_GETUSER_CREDENTIALS),
-						MATTER_TLV_ARRAY);
-					(void)matter_tlv_end_container(w);
-				} else {
-					(void)matter_tlv_put_null(
-						w, MATTER_TLV_CTX(TAG_GETUSER_CREDENTIALS));
-				}
-				(void)matter_tlv_put_null(w,
-							  MATTER_TLV_CTX(TAG_GETUSER_NEXT_INDEX));
-				(void)matter_tlv_end_container(w);
-			}
-		}
-		return;
-	}
 	(void)endpoint;
 
 	if (cluster == MATTER_CLUSTER_OPERATIONAL_CREDENTIALS) {
@@ -3954,18 +2794,6 @@ int matter_clusters_resume(struct matter_device_info *info)
 	advertise_operational(info);
 	return MATTER_OK;
 }
-
-#if TINYMATTER_VENDOR_CLUSTERS
-bool matter_clusters_uwb_presence_readable(const struct matter_device_info *info)
-{
-	/*
-	 * Asked about one of the gated twelve, not a global: the globals are
-	 * View and would answer true for everybody, which is the opposite of
-	 * what a caller wants to know.
-	 */
-	return uwb_presence_read_allowed(info, MATTER_ATTR_UWB_DEVICE_IN_RANGE);
-}
-#endif
 
 /**
  * Roll back fabric state created after the fail-safe was armed, wiping every
@@ -4042,146 +2870,6 @@ static uint8_t attr_write(void *ctx, const struct matter_im_path *path, const ui
 					 path->cluster)) {
 			return MATTER_IM_STATUS_UNSUPPORTED_ACCESS;
 		}
-#if TINYMATTER_VENDOR_CLUSTERS
-		if (path->cluster == MATTER_CLUSTER_APPROACH_DIRECTION) {
-			struct matter_tlv_reader r;
-			uint64_t v = 0u;
-
-			if (path->attribute != MATTER_ATTR_APPROACH_DIRECTION) {
-				return MATTER_IM_STATUS_UNSUPPORTED_WRITE;
-			}
-			if (data == NULL || data_len == 0u) {
-				return MATTER_IM_STATUS_INVALID_COMMAND;
-			}
-			matter_tlv_reader_init(&r, data, data_len);
-			if (matter_tlv_next(&r) != 0 || matter_tlv_get_u64(&r, &v) != 0) {
-				return MATTER_IM_STATUS_INVALID_COMMAND;
-			}
-			/* bitmap8; a wider value is the controller's error. */
-			if (v > 0xFFu) {
-				return MATTER_IM_STATUS_CONSTRAINT_ERROR;
-			}
-			info->approach_direction = (uint8_t)v;
-			return MATTER_IM_STATUS_SUCCESS;
-		}
-#endif
-#if MATTER_FEATURE_CLIENT
-		if (path->cluster == MATTER_CLUSTER_BINDING) {
-			int rc;
-
-			if (data == NULL || data_len == 0u) {
-				return MATTER_IM_STATUS_INVALID_COMMAND;
-			}
-			/*
-			 * The PIN before the list, and only for a node that has
-			 * a vendor id: MATTER_ATTR_BINDING_PIN(0) is 0x0000,
-			 * which is the standard list attribute, and answering a
-			 * list write by storing its bytes as a PIN is the kind
-			 * of mistake nothing downstream can detect.
-			 */
-			if (info->vendor_id != 0u &&
-			    path->attribute == MATTER_ATTR_BINDING_PIN(info->vendor_id)) {
-				struct matter_tlv_reader r;
-				const uint8_t *pin = NULL;
-				size_t pin_len = 0u;
-
-				matter_tlv_reader_init(&r, data, data_len);
-				if (matter_tlv_next(&r) != MATTER_OK ||
-				    matter_tlv_get_bytes(&r, &pin, &pin_len) != MATTER_OK) {
-					return MATTER_IM_STATUS_INVALID_COMMAND;
-				}
-				if (matter_binding_write_pin(&info->binding, pin, pin_len) !=
-				    MATTER_OK) {
-					return MATTER_IM_STATUS_CONSTRAINT_ERROR;
-				}
-				return MATTER_IM_STATUS_SUCCESS;
-			}
-			if (path->attribute != MATTER_ATTR_BINDING_LIST) {
-				return MATTER_IM_STATUS_UNSUPPORTED_WRITE;
-			}
-			/*
-			 * The fabric index comes from the SESSION, which the
-			 * port put here before dispatching. Zero means no
-			 * session chose one, and a fabric-scoped write with no
-			 * fabric behind it has no list to replace.
-			 */
-			if (info->accessing_fabric_index == 0u) {
-				return MATTER_IM_STATUS_UNSUPPORTED_ACCESS;
-			}
-			rc = matter_binding_write(&info->binding, info->accessing_fabric_index,
-						  data, data_len);
-			if (rc == MATTER_E_NOSPACE) {
-				return MATTER_IM_STATUS_RESOURCE_EXHAUSTED;
-			}
-			if (rc != MATTER_OK) {
-				return MATTER_IM_STATUS_CONSTRAINT_ERROR;
-			}
-			return MATTER_IM_STATUS_SUCCESS;
-		}
-#endif
-#if TINYMATTER_VENDOR_CLUSTERS
-		if (path->cluster == MATTER_CLUSTER_UWB_PRESENCE) {
-			struct matter_uwb_config next = info->uwb_config;
-			struct matter_tlv_reader r;
-			uint64_t v = 0u;
-			bool enabled = false;
-
-			if (data == NULL || data_len == 0u) {
-				return MATTER_IM_STATUS_INVALID_COMMAND;
-			}
-			matter_tlv_reader_init(&r, data, data_len);
-			if (matter_tlv_next(&r) != MATTER_OK) {
-				return MATTER_IM_STATUS_INVALID_COMMAND;
-			}
-			if (path->attribute >= MATTER_ATTR_UWB_DISTANCE_RELOCK &&
-			    path->attribute <= MATTER_ATTR_UWB_LOCK_UNLOCK) {
-				static const uint8_t flags[] = {
-					MATTER_UWB_POLICY_BOUND_RELOCK,
-					MATTER_UWB_POLICY_BOUND_UNLOCK,
-					MATTER_UWB_POLICY_LOCK_RELOCK,
-					MATTER_UWB_POLICY_LOCK_UNLOCK,
-				};
-				uint8_t flag = flags[path->attribute - MATTER_ATTR_UWB_DISTANCE_RELOCK];
-
-				if (matter_tlv_get_bool(&r, &enabled) != MATTER_OK) {
-					return MATTER_IM_STATUS_INVALID_COMMAND;
-				}
-				if (enabled) {
-					next.policy_flags |= flag;
-				} else {
-					next.policy_flags &= (uint8_t)~flag;
-				}
-			} else {
-				if (matter_tlv_get_u64(&r, &v) != MATTER_OK || v > UINT16_MAX) {
-					return MATTER_IM_STATUS_INVALID_COMMAND;
-				}
-				switch (path->attribute) {
-				case MATTER_ATTR_UWB_UNLOCK_THRESHOLD_CM:
-					next.unlock_cm = (uint16_t)v;
-					break;
-				case MATTER_ATTR_UWB_APPROACH_CM:
-					next.approach_cm = (uint16_t)v;
-					break;
-				case MATTER_ATTR_UWB_RELOCK_CM:
-					next.relock_cm = (uint16_t)v;
-					break;
-				case MATTER_ATTR_UWB_MOTOR_MS:
-					next.motor_ms = (uint16_t)v;
-					break;
-				default:
-					return MATTER_IM_STATUS_UNSUPPORTED_WRITE;
-				}
-			}
-			if (next.unlock_cm < 20u || next.unlock_cm >= next.approach_cm ||
-			    next.approach_cm >= next.relock_cm || next.relock_cm > 1000u ||
-			    next.motor_ms < 100u || next.motor_ms > 5000u) {
-				return MATTER_IM_STATUS_CONSTRAINT_ERROR;
-			}
-			next.version = MATTER_UWB_CONFIG_VERSION;
-			info->uwb_config = next;
-			return MATTER_IM_STATUS_SUCCESS;
-		}
-#endif
 		if (path->cluster != MATTER_CLUSTER_DOOR_LOCK) {
 			return has_cluster(ctx, path->endpoint, path->cluster)
 				       ? MATTER_IM_STATUS_UNSUPPORTED_WRITE
@@ -4276,54 +2964,14 @@ void matter_clusters_record_lock_operation(struct matter_device_info *info, uint
 	 * "everything" without also meaning "one I have already seen". */
 	ev->number = ++info->next_event_number;
 	ev->timestamp_ms = info->uptime_ms_cb != NULL ? info->uptime_ms_cb() : 0u;
-#if MATTER_FEATURE_DL_ALARMS
-	ev->event_id = MATTER_EVENT_DL_LOCK_OPERATION;
-#endif
 	ev->operation = operation;
 	ev->source = source;
 	ev->fabric_index = fabric_index;
 	/* Zero is not a legal operational node id, so it doubles as "unknown"
-	 * and is reported as null. A walk-up has no node behind it at all. */
+	 * and is reported as null. */
 	ev->source_node = fabric_index != 0u ? source_node : 0u;
 	info->event_count++;
 }
-
-#if MATTER_FEATURE_DL_ALARMS
-/*
- * The eviction rule and the numbering appear a second time here rather than in
- * a helper both recorders call. That is deliberate and it is a trade: factoring
- * them out was measured to move 259 KB of the DEFAULT image -- every address
- * downstream of matter_clusters.o shifts -- for a build that has no alarms in
- * it at all. Keeping the operation recorder above textually what it was is what
- * makes an image without alarms byte-identical to the one before this event existed.
- *
- * The two copies MUST stay in step: same eviction (drop the oldest), same
- * pre-increment (the first event is number 1), same clock. They are the only
- * two places an event enters this ring, and a divergence between them shows up
- * as a repeated EventNumber, which a subscriber's filter reads as "already
- * seen" and silently drops.
- */
-void matter_clusters_record_alarm(struct matter_device_info *info, uint8_t alarm_code)
-{
-	struct matter_lock_event *ev;
-
-	if (info == NULL) {
-		return;
-	}
-	if (info->event_count == MATTER_EVENTS_MAX) {
-		memmove(&info->events[0], &info->events[1],
-			sizeof(info->events[0]) * (MATTER_EVENTS_MAX - 1u));
-		info->event_count--;
-	}
-	ev = &info->events[info->event_count];
-	memset(ev, 0, sizeof(*ev));
-	ev->number = ++info->next_event_number;
-	ev->timestamp_ms = info->uptime_ms_cb != NULL ? info->uptime_ms_cb() : 0u;
-	ev->event_id = MATTER_EVENT_DL_ALARM;
-	ev->alarm_code = alarm_code;
-	info->event_count++;
-}
-#endif
 
 size_t matter_clusters_event_count(const struct matter_device_info *info)
 {
@@ -4344,11 +2992,7 @@ static bool event_at(void *ctx, size_t index, struct matter_im_event *out)
 	}
 	out->endpoint = MATTER_ENDPOINT_LOCK;
 	out->cluster = MATTER_CLUSTER_DOOR_LOCK;
-#if MATTER_FEATURE_DL_ALARMS
-	out->event = info->events[index].event_id;
-#else
 	out->event = MATTER_EVENT_DL_LOCK_OPERATION;
-#endif
 	out->number = info->events[index].number;
 	out->timestamp_ms = info->events[index].timestamp_ms;
 	out->priority = MATTER_EVENT_PRIORITY_CRITICAL;
@@ -4356,11 +3000,9 @@ static bool event_at(void *ctx, size_t index, struct matter_im_event *out)
 }
 
 /**
- * The event's fields: a DoorLockAlarm's single AlarmCode, or the LockOperation
- * fields below.
+ * The event's fields: the LockOperation fields below.
  *
- * UserIndex is always null: this node's users are a table a controller writes,
- * and nothing correlates an unlock back to one of them. A null nullable says
+ * UserIndex is always null: this node keeps no users. A null nullable says
  * "not known", which is true; a zero would name user slot 0, which is not.
  */
 static void event_data(void *ctx, size_t index, struct matter_tlv_writer *w, matter_tlv_tag_t tag)
@@ -4374,28 +3016,14 @@ static void event_data(void *ctx, size_t index, struct matter_tlv_writer *w, mat
 	}
 	ev = &info->events[index];
 
-#if MATTER_FEATURE_DL_ALARMS
-	/*
-	 * A DoorLockAlarm is one field and stops there. Padding it out with the
-	 * LockOperation fields would describe an operation that never happened.
-	 */
-	if (ev->event_id == MATTER_EVENT_DL_ALARM) {
-		(void)matter_tlv_start_container(w, tag, MATTER_TLV_STRUCTURE);
-		(void)matter_tlv_put_u64(w, MATTER_TLV_CTX(MATTER_DL_ALARM_FIELD_CODE),
-					 ev->alarm_code);
-		(void)matter_tlv_end_container(w);
-		return;
-	}
-#endif
-
 	(void)matter_tlv_start_container(w, tag, MATTER_TLV_STRUCTURE);
 	(void)matter_tlv_put_u64(w, MATTER_TLV_CTX(MATTER_DL_LOCK_OP_FIELD_TYPE), ev->operation);
 	(void)matter_tlv_put_u64(w, MATTER_TLV_CTX(MATTER_DL_LOCK_OP_FIELD_SOURCE), ev->source);
 	(void)matter_tlv_put_null(w, MATTER_TLV_CTX(MATTER_DL_LOCK_OP_FIELD_USER_INDEX));
 	/*
 	 * Each nullable stands on its own. A controller command has a fabric and
-	 * an unknown node; a walk-up has neither. Naming a node that did not ask
-	 * would tell a controller that IT unlocked the door.
+	 * an unknown node; a change no controller asked for has neither. Naming a
+	 * node that did not ask would tell a controller that IT unlocked the door.
 	 */
 	if (ev->fabric_index != 0u) {
 		(void)matter_tlv_put_u64(w, MATTER_TLV_CTX(MATTER_DL_LOCK_OP_FIELD_FABRIC_INDEX),

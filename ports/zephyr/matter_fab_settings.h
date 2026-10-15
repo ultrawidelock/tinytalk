@@ -47,10 +47,10 @@ int matter_fab_load(struct matter_device_info *info);
 int matter_fab_erase(void);
 
 /**
- * Write the two Door Lock attributes a controller sets and expects to read
- * back: AutoRelockTime and the Approach Direction bitmap.
+ * Write the Door Lock attribute a controller sets and expects to read back:
+ * AutoRelockTime.
  *
- * Only what CHANGED is written, which is why the previous values are asked
+ * Only what CHANGED is written, which is why the previous value is asked
  * for: a controller re-writing a value it already set should cost no flash.
  * Call after a successful attribute write.
  *
@@ -58,28 +58,23 @@ int matter_fab_erase(void);
  *         tm_kv_result from the backend. A failure is not fatal --
  *         the RAM value stands for this boot.
  */
-int matter_dl_attr_store(const struct matter_device_info *info, uint32_t prev_auto_relock_s,
-			 uint8_t prev_approach_direction);
+int matter_dl_attr_store(const struct matter_device_info *info, uint32_t prev_auto_relock_s);
 
 /**
- * Read them back over whatever the port initialised them to.
+ * Read it back over whatever the port initialised it to.
  *
- * Fields with nothing stored are LEFT ALONE rather than zeroed, because zero is
- * a legal value for both and the caller's boot default is the better answer.
+ * A field with nothing stored is LEFT ALONE rather than zeroed, because zero is
+ * a legal value and the caller's boot default is the better answer.
  *
  * @return 0, or `-EINVAL` when @p info is NULL. Backend failures leave the
  *         caller's defaults untouched and are deliberately not returned.
  */
 int matter_dl_attr_load(struct matter_device_info *info);
 
-int matter_uwb_config_store(const struct matter_uwb_config *config,
-			    const struct matter_uwb_config *previous);
-int matter_uwb_config_load(struct matter_uwb_config *config);
-
 /**
- * Forget them, so the next boot uses the port's defaults.
+ * Forget it, so the next boot uses the port's defaults.
  *
- * @return 0 when both keys are absent or removed, or the first negative
+ * @return 0 when the key is absent or removed, or the first negative
  *         tm_kv_result from the backend.
  */
 int matter_dl_attr_erase(void);

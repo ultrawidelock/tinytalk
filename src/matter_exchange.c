@@ -771,11 +771,11 @@ int matter_exchange_replay(struct matter_exchange *x, uint8_t *out, size_t cap,
 	return MATTER_OK;
 }
 
-/* NOT guarded by MATTER_FEATURE_CLIENT: the server's own subscription
- * reports ride exchanges this node opens (matter_exchange_send_initiator
- * above), and the StatusResponse that closes one is acknowledged HERE.
- * Guarded, a non-client image could send a report it can never ack, and
- * the peer retransmits that StatusResponse for the whole MRP schedule. */
+/* The server's own subscription reports ride exchanges this node opens
+ * (matter_exchange_send_initiator above), and the StatusResponse that closes
+ * one is acknowledged HERE. Without it the node could send a report it can
+ * never ack, and the peer retransmits that StatusResponse for the whole MRP
+ * schedule. */
 int matter_exchange_ack_initiator(struct matter_exchange *x, uint16_t exchange_id, uint8_t *out,
 				  size_t cap, size_t *out_len)
 {
@@ -836,38 +836,6 @@ int matter_exchange_ack_initiator(struct matter_exchange *x, uint16_t exchange_i
 	x->ack_pending = false;
 	return MATTER_OK;
 }
-
-#if MATTER_FEATURE_CLIENT
-
-int matter_exchange_open_initiator(struct matter_exchange *x, uint16_t local_id, uint16_t peer_id,
-				   uint16_t exchange_id, const struct matter_session_keys *keys,
-				   uint32_t entropy)
-{
-	int rc;
-
-	if (x == NULL) {
-		return MATTER_E_INVAL;
-	}
-	/* MRP true: this session only ever runs over UDP. */
-	matter_exchange_init(x, entropy, true);
-	rc = matter_exchange_promote(x, local_id, peer_id, keys, entropy);
-	if (rc != MATTER_OK) {
-		return rc;
-	}
-	/*
-	 * What promote() deliberately withholds. The exchange id is set as well
-	 * as the flag, because the peer's answers arrive with I CLEAR on this
-	 * id: recv_impl() consumes those through exchange_is_ours() without
-	 * adopting the id, so nothing else would ever put it here, and
-	 * matter_exchange_ack_initiator() needs to know which exchange the
-	 * pending acknowledgement belongs to.
-	 */
-	x->open = true;
-	x->exchange_id = exchange_id;
-	return MATTER_OK;
-}
-
-#endif /* MATTER_FEATURE_CLIENT */
 
 /**
  * Set the operational node IDs for this exchange; used to populate node ID fields in secure channel

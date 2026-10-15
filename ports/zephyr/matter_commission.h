@@ -50,15 +50,6 @@ bool matter_commission_has_fabric(void);
 bool matter_commission_window_open(void);
 
 /**
- * True exactly once after an UnlockDoor command was invoked; reading clears it.
- *
- * For a main loop that has to tell a deliberate unlock from any other: the
- * Matter path runs on OpenThread's thread, so the loop polls this instead of
- * being called from there.
- */
-bool matter_commission_take_deliberate_unlock(void);
-
-/**
  * Open a basic commissioning window (the factory setup code) for @p timeout_s,
  * as OpenBasicCommissioningWindow does. For a local gesture such as a button.
  *
@@ -71,21 +62,6 @@ int matter_commission_open_window(uint16_t timeout_s);
  * Called exactly once by the transport after final confirmation or failure.
  */
 void matter_commission_ble_tx_complete(int status);
-
-#if IS_ENABLED(CONFIG_TINYMATTER_DOOR_LOCK_ALARMS)
-/**
- * Record a DoorLockAlarm, if the bolt says it is one.
- *
- * The bolt test lives here rather than in the caller because the lock state is
- * this file's, held under the same mutex as everything else in it: a forced
- * door or a door left ajar is only an alarm while the lock is LOCKED, and a
- * sensor cannot know that on its own. An alarm raised while the owner has the
- * lock open is noise, and this node has one report channel to spend.
- *
- * @param alarm_code MATTER_DL_ALARM_*.
- */
-void matter_commission_record_alarm(uint8_t alarm_code);
-#endif
 
 /*
  * ---- provided by the application -------------------------------------------

@@ -175,28 +175,6 @@ int matter_thread_advertise_commissionable(uint16_t discriminator, uint16_t port
 int matter_thread_unadvertise_commissionable(void);
 
 /**
- * Print the active operational dataset as hex. BENCH ONLY, and a no-op unless
- * CONFIG_TINYMATTER_THREAD_DATASET_DUMP.
- *
- * THIS DISCLOSES THE THREAD NETWORK KEY. It exists for one job: commissioning a
- * second Matter administrator over BLE, which is the only transport PASE runs on
- * here, and whose chip-tool command takes a dataset argument. The only safe
- * value is the dataset already in force, so the node has to say which that is.
- *
- * Called when a commissioning window opens, and -- since 2026-08-20 -- retried
- * from the bench build's main loop until it succeeds. The window is a fine
- * trigger when a controller is talking to you and useless when it is not,
- * which is exactly the case the dataset is usually wanted in. Retrying is what
- * makes it work on a reboot of a node already on a fabric;
- * matter_thread_wait_attached() only runs during INITIAL commissioning, so
- * hanging it off attach would never fire there.
- *
- * @return 0 when the dataset was printed, negative when there is none yet, so
- *         a caller can retry rather than guess how long attaching takes.
- */
-int matter_thread_dump_active_dataset(void);
-
-/**
  * Where a subscriber can be reached, kept opaque on purpose.
  *
  * A raw IPv6 address and port rather than an OpenThread type: this header is
@@ -228,36 +206,6 @@ void matter_thread_peer_current(struct matter_thread_peer *out);
  *         never captured.
  */
 int matter_thread_send_to(const struct matter_thread_peer *peer, const uint8_t *msg, size_t len);
-
-/**
- * The answer to a resolve, or the news that there was not one.
- *
- * @param peer where the node is, or NULL when it could not be found. A NULL is
- *        an ANSWER and not a malfunction: a bound lock that is unplugged, on
- *        another network, or whose SRP registration has lapsed is exactly this,
- *        and the client backs off rather than retrying into it.
- */
-typedef void (*matter_thread_resolve_fn)(void *ctx, const struct matter_thread_peer *peer);
-
-/**
- * Find a node on this Thread network by its operational instance name.
- *
- * Matter nodes register themselves with the network's SRP server, which makes
- * them resolvable as `<instance>._matter._tcp`. The instance name is derived,
- * not discovered -- matter_fabric_instance_name() builds it out of the
- * compressed fabric id and the node id -- so a client that knows who it wants
- * to talk to can ask for exactly that and nothing else. There is no browsing
- * here and no need for any.
- *
- * ASYNCHRONOUS, and that is the point: this returns as soon as the query is
- * away, and @p cb runs later on OpenThread's own thread. The caller is the
- * unlock path, which has already opened the local lock and may not wait for a
- * network round trip.
- *
- * @return MATTER_OK when the query went out, MATTER_E_STATE when the stack is
- *         not up or a query is already outstanding, or MATTER_E_INVAL.
- */
-int matter_thread_resolve(const char *instance_name, matter_thread_resolve_fn cb, void *ctx);
 
 /**
  * Release every SRP registration this node holds.

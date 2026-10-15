@@ -17,10 +17,10 @@
  * passcode. A real deployment generates its own; see the help for
  * CONFIG_TINYMATTER_SPAKE2P_VERIFIER.
  *
- * Carried from the source project, cut to the generic node: its UWB presence,
- * credential reader, firmware update, LED and self-test code is gone, and the
- * application supplies the two things only it knows about, the advertising
- * set and the bolt (see matter_commission.h).
+ * Carried from the source project, cut to the generic node: its presence
+ * sensing, credential reader, firmware update, LED and self-test code is gone,
+ * and the application supplies the two things only it knows about, the
+ * advertising set and the bolt (see matter_commission.h).
  */
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
@@ -40,10 +40,6 @@
 #include <tinymatter/matter_attest.h>
 #include <tinymatter/matter_case.h>
 #include <tinymatter/matter_clusters.h>
-/* AFTER matter_clusters.h, which is where MATTER_FEATURE_CLIENT is defaulted. */
-#if MATTER_FEATURE_CLIENT
-#error "the client role's sequencing (the source project's matter_client.c) is not carried"
-#endif
 #include "matter_commission.h"
 #include <tinymatter/matter_exchange.h>
 #include "matter_fab_settings.h" /* the fabric table, across a reboot */
@@ -86,8 +82,8 @@ static struct matter_device_info s_info;
  * costs the same RAM and no flash at all.
  *
  * This was cheap when the struct was small and got expensive silently as the
- * struct grew, which is why it survived the size hunt in
- * overlay-client-debug.conf: that went looking for code, and this is data.
+ * struct grew, which is why it survived an earlier size hunt: that went looking
+ * for code, and this is data.
  * Adding a non-zero field here is what puts it back in .data, so add it to
  * this function instead.
  */
@@ -110,16 +106,6 @@ static void s_info_defaults(void)
 	 * yet, so false would promise a return that never happens.
 	 */
 	s_info.supports_concurrent_connection = true;
-	/* All three directions permitted, the default the CHIP builds declare;
-	 * zero is a writable value so it cannot mean "never set". */
-	s_info.approach_direction = MATTER_APPROACH_DIRECTION_ALL;
-	s_info.uwb_distance_mm = -1;
-	s_info.uwb_config.version = MATTER_UWB_CONFIG_VERSION;
-	s_info.uwb_config.policy_flags = MATTER_UWB_POLICY_ALL;
-	s_info.uwb_config.unlock_cm = 100u;
-	s_info.uwb_config.approach_cm = 180u;
-	s_info.uwb_config.relock_cm = 250u;
-	s_info.uwb_config.motor_ms = 500u;
 }
 
 /* Advertising and the main loop read these outside the Matter owner. Publish
@@ -127,8 +113,6 @@ static void s_info_defaults(void)
  * administrative state to a second lock owner. Static zero is the correct
  * pre-init state: no restored fabric yet and no open window. */
 static atomic_t s_has_fabric_snapshot;
-/* An UnlockDoor command was invoked; the main loop consumes this. */
-static atomic_t s_deliberate_unlock;
 static atomic_t s_window_open_snapshot;
 
 static void fabric_snapshot_refresh_owned(void)
@@ -149,8 +133,8 @@ static struct matter_im_server s_im;
  * A refused command is invisible in this log: the "invoke:" line prints for
  * every request, the refusal travels as an IM status the encoder writes and
  * nothing here reads. That hid ADMINISTER denials for a whole bench evening --
- * a controller whose SetAliroReaderConfig and GetUser are refused just stops
- * enrolling, and the log looks exactly like the controller losing interest.
+ * a controller whose commands are refused just stops, and the log looks exactly
+ * like the controller losing interest.
  */
 static matter_im_command_fn s_cluster_command;
 
@@ -163,24 +147,6 @@ static uint8_t command_status_logged(void *ctx, const struct matter_im_invoke *i
 		LOG_WRN("  -> refused, status 0x%02x (node %08x%08x)", st,
 			(unsigned int)(s_info.accessing_node_id >> 32),
 			(unsigned int)s_info.accessing_node_id);
-	} else if (*response_command == MATTER_CMD_DL_GET_USER_RESPONSE) {
-		/* The answer a RemoveFabric has followed: in use 0, an empty
-		 * slot, where the controller had written a user. No other
-		 * cluster here answers with this command id. */
-		LOG_INF("  -> user %u in use %u", s_info.last_user_index,
-			s_info.users[s_info.last_user_index - 1u].in_use);
-	} else if (*response_command == MATTER_CMD_DL_GET_CREDENTIAL_STATUS_RESPONSE) {
-		/* Which address the controller is probing: it is choosing where
-		 * its next SetCredential goes, and the CREDENTIAL lines around
-		 * this one say what is already there. */
-		LOG_INF("  -> asks about credential type %u index %u", s_info.last_credential_type,
-			s_info.last_credential_index);
-	} else if (*response_command == MATTER_CMD_DL_SET_CREDENTIAL_RESPONSE &&
-		   s_info.last_credential_status != MATTER_IM_STATUS_SUCCESS) {
-		/* The verdict travels in the response body, so a SetCredential
-		 * this node declined looked like one that simply printed
-		 * nothing. 0x03 is Occupied: the index holds another key. */
-		LOG_WRN("  -> SetCredential status 0x%02x", s_info.last_credential_status);
 	}
 	return st;
 }
@@ -445,10 +411,6 @@ static void admin_arm(uint16_t timeout_s, uint8_t kind)
 	uint16_t discriminator = matter_ble_discriminator();
 
 	(void)matter_thread_advertise_commissionable(discriminator, MATTER_OPERATIONAL_PORT);
-	/* Bench builds only, and deliberately here: the dataset is wanted exactly
-	 * when a window is open, and tying the disclosure to that keeps it to a
-	 * gesture the owner just made rather than every boot. */
-	(void)matter_thread_dump_active_dataset();
 	LOG_INF("commissioning window open for %u s (kind %u)", (unsigned)timeout_s,
 		(unsigned)kind);
 }
@@ -1230,8 +1192,8 @@ static void send_read_chunk(struct matter_im_read_state *s)
  * They are DEMOTED rather than deleted: `matter_ble` at DBG brings all of them
  * back, so the traffic view still exists for whoever needs it. What stays at
  * INF is everything that reports a DECISION -- writes, refusals, unsecured
- * drops, window changes -- because those are what a walk-up capture is read
- * for, and losing them was the alternative on the table.
+ * drops, window changes -- because those are what a capture is read for, and
+ * losing them was the alternative on the table.
  */
 	LOG_DBG("  Read chunk %u B, %u report(s), %u total, %s",
 		(unsigned int)report_len, emitted, (unsigned int)(s->sent + emitted),
@@ -1405,9 +1367,6 @@ static void on_invoke_request(const struct matter_exchange_in *in)
 	if (inv.cluster == MATTER_CLUSTER_DOOR_LOCK &&
 	    (inv.command == MATTER_CMD_DL_LOCK_DOOR || inv.command == MATTER_CMD_DL_UNLOCK_DOOR)) {
 		notify_lock_state_changed();
-		if (inv.command == MATTER_CMD_DL_UNLOCK_DOOR) {
-			atomic_set(&s_deliberate_unlock, 1);
-		}
 	}
 	if (inv.cluster == MATTER_CLUSTER_NETWORK_COMMISSIONING &&
 	    inv.command == MATTER_CMD_NC_ADD_OR_UPDATE_THREAD_NETWORK) {
@@ -1513,8 +1472,6 @@ static void on_write_request(const struct matter_exchange_in *in)
 	uint8_t *payload;
 	size_t payload_cap;
 	uint32_t prev_relock_s;
-	uint8_t prev_approach;
-	struct matter_uwb_config prev_uwb;
 	size_t resp_len = 0u;
 	int rc;
 
@@ -1526,7 +1483,7 @@ static void on_write_request(const struct matter_exchange_in *in)
 	LOG_INF("  write: endpoint %u cluster 0x%04x attribute 0x%04x, %u B", wr.path.endpoint,
 		(unsigned int)wr.path.cluster, (unsigned int)wr.path.attribute,
 		(unsigned int)wr.data_len);
-	/* The ACL decides which controller may enroll credentials; its raw
+	/* The ACL decides which controller may operate the lock; its raw
 	 * bytes are the only way to see WHICH subject Apple granted. */
 	if (wr.path.cluster == MATTER_CLUSTER_ACCESS_CONTROL && wr.path.attribute == 0u) {
 		LOG_HEXDUMP_INF(wr.data, wr.data_len, "  ACL bytes:");
@@ -1540,8 +1497,6 @@ static void on_write_request(const struct matter_exchange_in *in)
 	 * fabric table.
 	 */
 	prev_relock_s = s_info.auto_relock_time_s;
-	prev_approach = s_info.approach_direction;
-	prev_uwb = s_info.uwb_config;
 	slot = tx_acquire();
 	if (slot == NULL) {
 		LOG_ERR("no owned packet slot for WriteResponse");
@@ -1554,22 +1509,7 @@ static void on_write_request(const struct matter_exchange_in *in)
 		tx_abort_build(slot);
 		return;
 	}
-	(void)matter_dl_attr_store(&s_info, prev_relock_s, prev_approach);
-	if (memcmp(&prev_uwb, &s_info.uwb_config, sizeof(prev_uwb)) != 0) {
-		(void)matter_uwb_config_store(&s_info.uwb_config, &prev_uwb);
-	}
-#if MATTER_FEATURE_CLIENT
-	/*
-	 * Keyed on the CLUSTER rather than on the write status: the encoder
-	 * above only mutates s_info for a write it accepted, and re-storing an
-	 * unchanged table costs one flash record against a binding that is
-	 * silently gone after the next reboot. The slot argument is unused --
-	 * the table is node-wide and carries its own fabric scoping.
-	 */
-	if (wr.path.cluster == MATTER_CLUSTER_BINDING) {
-		(void)matter_fab_commit(&s_info, MATTER_FABRIC_STORE_BINDING, 0u, NULL, 0u);
-	}
-#endif
+	(void)matter_dl_attr_store(&s_info, prev_relock_s);
 	if (resp_len == 0u) {
 		/* The write ran; the peer asked not to be told. */
 		LOG_DBG("  write done, response suppressed");
@@ -1899,10 +1839,7 @@ static int send_subscription_report(struct sub_state *s,
 	 * receive path leaves on s_info belongs to whoever spoke last -- which
 	 * for a subscription report is the wrong subscriber or, after
 	 * on_message_owned() cleared it, nobody. The data model reads it to
-	 * decide both fabric filtering and, since UWB presence became
-	 * privilege-gated, whether the subscriber may see presence at all: left
-	 * stale, a controller with Manage would get an empty presence report
-	 * because some PASE datagram arrived first.
+	 * decide fabric filtering.
 	 *
 	 * Cleared again below for the same reason the receive path clears it.
 	 */
@@ -2164,18 +2101,6 @@ static void subscription_heartbeat_arm(void)
 	(void)k_work_schedule(&s_heartbeat_work, K_SECONDS(subscription_heartbeat_period_s()));
 }
 
-/*
- * The credential side of this lock moved, so Matter has to be told.
- *
- * A walk-up unlock and its walk-away relock never went through the Door Lock
- * cluster at all -- they are the reader's own transaction -- so LockState kept
- * whatever the last tile tap set it to. The Wallet animated "unlocked" while
- * the Home tile said locked, and the app was not wrong so much as uninformed:
- * nothing had reported the change.
- *
- * Runs on the BLE-host task, so it does the cheapest possible thing: set a byte
- * and submit. The report itself is built on the system work queue.
- */
 /** The clock an event's SystemTimestamp is taken from. */
 static uint64_t matter_event_uptime_ms(void)
 {
@@ -2183,31 +2108,6 @@ static uint64_t matter_event_uptime_ms(void)
 
 	return ms > 0 ? (uint64_t)ms : 0u;
 }
-
-#if IS_ENABLED(CONFIG_TINYMATTER_DOOR_LOCK_ALARMS)
-void matter_commission_record_alarm(uint8_t alarm_code)
-{
-	k_mutex_lock(&s_owner_lock, K_FOREVER);
-	/*
-	 * Locked or nothing. The sensors report about the DOOR; only this file
-	 * knows what the bolt is supposed to be doing, and an alarm about a door
-	 * the owner deliberately left open is the kind of event that teaches a
-	 * controller's owner to mute the accessory.
-	 */
-	if (s_info.lock_state == MATTER_DL_LOCK_STATE_LOCKED) {
-		matter_clusters_record_alarm(&s_info, alarm_code);
-		LOG_WRN("door alarm %u recorded", (unsigned int)alarm_code);
-		/*
-		 * Nothing about the bolt changed -- this only asks for the
-		 * report that will carry the event, and re-drives the lock LED
-		 * to the value it already has.
-		 */
-		notify_lock_state_changed();
-	}
-	k_mutex_unlock(&s_owner_lock);
-}
-#endif
-
 
 /** The session serving the datagram in flight; 0 when it arrived over BLE. */
 static uint16_t current_session_id(void)
@@ -2440,18 +2340,6 @@ static void sub_drop_session(uint16_t session_id)
 	}
 }
 
-static void reader_readback_clear(void)
-{
-	memset(s_info.users, 0, sizeof(s_info.users));
-	memset(s_info.aliro_verification_key, 0,
-	       sizeof(s_info.aliro_verification_key));
-	memset(s_info.aliro_group_id, 0, sizeof(s_info.aliro_group_id));
-	memset(s_info.aliro_group_resolving_key, 0,
-	       sizeof(s_info.aliro_group_resolving_key));
-	s_info.have_aliro_group_resolving_key = false;
-	s_info.have_aliro_reader_config = false;
-}
-
 /** Revoke every live and persisted session resource owned by one removed fabric. */
 static void case_drop_fabric(uint8_t fabric_index)
 {
@@ -2477,11 +2365,6 @@ static void case_drop_fabric(uint8_t fabric_index)
 			LOG_WRN("  removed fabric %u subscription tombstone not persisted",
 				(unsigned int)fabric_index);
 		}
-	}
-	if (!matter_commission_has_fabric()) {
-		/* Clear the cluster's readback copy, so the next home cannot
-		 * observe the old one. */
-		reader_readback_clear();
 	}
 	matter_commission_readvertise();
 }
@@ -3917,11 +3800,6 @@ bool matter_commission_has_fabric(void)
 	return atomic_get(&s_has_fabric_snapshot) != 0;
 }
 
-bool matter_commission_take_deliberate_unlock(void)
-{
-	return atomic_clear(&s_deliberate_unlock) != 0;
-}
-
 
 int matter_commission_init(void)
 {
@@ -3951,13 +3829,12 @@ int matter_commission_init(void)
 	}
 
 	/*
-	 * Stable per-board Matter identifiers. Derived from the factory EUI-64
+	 * Stable per-board Matter identifier. Derived from the factory EUI-64
 	 * rather than drawn from the RNG, because nothing on the Matter
 	 * side of this node is persisted yet (there is no settings handler in
 	 * the core at all) and a value regenerated at every boot would make
-	 * this look like a different reader group after each power cycle.
-	 * Domain-separated hashes keep the permanent EUI-64 itself off the wire;
-	 * the serial and group sub-identifier cannot be correlated by their value.
+	 * this look like a different device after each power cycle.
+	 * A domain-separated hash keeps the permanent EUI-64 itself off the wire.
 	 */
 	{
 		uint32_t id[2] = { NRF_FICR->DEVICEID[0], NRF_FICR->DEVICEID[1] };
@@ -3970,7 +3847,7 @@ int matter_commission_init(void)
 		tm_sha256_update(&h, (const uint8_t *)id, sizeof(id));
 		tm_sha256_final(&h, digest);
 		serial_len = snprintf(s_info.serial_number, sizeof(s_info.serial_number),
-				      "DWM3001CDK-%02X%02X%02X%02X%02X%02X%02X%02X",
+				      "TM-%02X%02X%02X%02X%02X%02X%02X%02X",
 				      (unsigned int)digest[0], (unsigned int)digest[1],
 				      (unsigned int)digest[2], (unsigned int)digest[3],
 				      (unsigned int)digest[4], (unsigned int)digest[5],
@@ -3978,12 +3855,6 @@ int matter_commission_init(void)
 		if (serial_len < 0 || (size_t)serial_len >= sizeof(s_info.serial_number)) {
 			s_info.serial_number[0] = '\0';
 		}
-
-		tm_sha256_init(&h);
-		tm_sha256_update(&h, (const uint8_t *)"tinymatter-group-sub-id", 23u);
-		tm_sha256_update(&h, (const uint8_t *)id, sizeof(id));
-		tm_sha256_final(&h, digest);
-		memcpy(s_info.aliro_group_sub_id, digest, MATTER_ALIRO_GROUP_ID_LEN);
 	}
 
 	matter_clusters_init(&s_im, &s_info);
@@ -4003,7 +3874,6 @@ int matter_commission_init(void)
 	 * not survive -- the next commissioner reads what the last one set.
 	 */
 	(void)matter_dl_attr_load(&s_info);
-	(void)matter_uwb_config_load(&s_info.uwb_config);
 	matter_ble_set_link_handler(on_link_reset);
 	matter_ble_set_tx_handler(matter_commission_ble_tx_complete);
 	matter_ble_set_msg_handler(on_message);

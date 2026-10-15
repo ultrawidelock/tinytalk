@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: ISC */
 
-/* Durable Matter identity storage for the custom DWM3001CDK stack. */
+/* Durable Matter identity storage: fabrics, ACLs and the network, over tm_kv. */
 #include <errno.h>
 #include <string.h>
 
@@ -22,10 +22,6 @@ enum record_kind {
 	REC_FABRIC = 3,
 	REC_ACL = 4,
 	REC_ICAC = 5,
-#if MATTER_FEATURE_CLIENT
-	REC_BINDING = 6,
-#endif
-	REC_USERS = 7,
 };
 
 struct record_header {
@@ -72,28 +68,12 @@ struct icac_record {
 	uint8_t data[MATTER_CERT_MAX];
 };
 
-#if MATTER_FEATURE_CLIENT
-struct binding_record {
-	struct record_header h;
-	struct matter_binding_table table;
-};
-#endif
-
-struct users_record {
-	struct record_header h;
-	struct matter_user users[MATTER_DL_USERS_MAX];
-};
-
 union record_io {
 	struct meta_record meta;
 	struct network_record network;
 	struct fabric_record fabric;
 	struct acl_record acl;
 	struct icac_record icac;
-#if MATTER_FEATURE_CLIENT
-	struct binding_record binding;
-#endif
-	struct users_record users;
 };
 
 /* One bounded static codec buffer. Earlier tree-shaped settings writes
@@ -112,10 +92,6 @@ static uint32_t s_network_epoch;
 static uint8_t s_network_state;
 static uint32_t s_icac_epoch;
 static uint8_t s_icac_state;
-#if MATTER_FEATURE_CLIENT
-static uint32_t s_binding_epoch;
-static uint8_t s_binding_state;
-#endif
 
 _Static_assert(TM_KV_KEY_MATTER_MF2_FAB0 + MATTER_SUPPORTED_FABRICS <=
 		       TM_KV_KEY_MATTER_MF2_FAB_LIMIT,
@@ -125,16 +101,6 @@ _Static_assert(TM_KV_KEY_MATTER_MF2_ACL0 + MATTER_SUPPORTED_FABRICS <=
 	       "Matter ACL slots have outgrown their key window");
 _Static_assert(sizeof(union record_io) <= TM_KV_VALUE_MAX,
 	       "Matter record exceeds the key-value seam's value ceiling");
-/* record_read() discards a record of any other size, and an image that boots
- * with an empty user table is one its controller removes. Changing this number
- * means migrating the stored record, not just accepting the new size. */
-_Static_assert(sizeof(struct users_record) == 136u,
-	       "the stored user table changed shape; an update would drop every user");
-#if MATTER_FEATURE_CLIENT
-_Static_assert(TM_KV_KEY_MATTER_MF2_BINDING <
-		       TM_KV_KEY_MATTER_MF2_FAB0,
-	       "Matter binding key collides with the fabric slots");
-#endif
 
 static uint32_t crc32(const uint8_t *data, size_t len)
 {
@@ -284,43 +250,6 @@ static int load_icac(struct matter_device_info *info)
 	return 0;
 }
 
-#if MATTER_FEATURE_CLIENT
-static int load_binding(struct matter_device_info *info)
-{
-	int rc = record_read(TM_KV_KEY_MATTER_MF2_BINDING,
-			     sizeof(s_io.binding));
-
-	if (rc != 0) {
-		return rc < 0 ? rc : 0;
-	}
-	if (record_valid(&s_io.binding, sizeof(s_io.binding), REC_BINDING)) {
-		s_binding_epoch = s_io.binding.h.epoch;
-		s_binding_state = s_io.binding.h.state;
-		if (s_binding_state == REC_LIVE) {
-			info->binding = s_io.binding.table;
-		}
-	}
-	return 0;
-}
-#endif
-
-/* Taken only from the live epoch. clear_identity() empties the table again on
- * every path that ends with no fabric, so a user row never outlives the last
- * administrator who could have written it. */
-static int load_users(struct matter_device_info *info)
-{
-	int rc = record_read(TM_KV_KEY_MATTER_MF2_USERS, sizeof(s_io.users));
-
-	if (rc != 0) {
-		return rc < 0 ? rc : 0;
-	}
-	if (record_valid(&s_io.users, sizeof(s_io.users), REC_USERS) &&
-	    s_io.users.h.epoch == s_epoch && s_io.users.h.state == REC_LIVE) {
-		memcpy(info->users, s_io.users.users, sizeof(info->users));
-	}
-	return 0;
-}
-
 static int load_fabric(struct matter_device_info *info, uint8_t slot)
 {
 	int rc = record_read(TM_KV_KEY_MATTER_MF2_FAB0 + slot,
@@ -437,33 +366,6 @@ static int store_icac(const struct matter_device_info *info)
 	return record_put(TM_KV_KEY_MATTER_MF2_ICAC, sizeof(s_io.icac));
 }
 
-#if MATTER_FEATURE_CLIENT
-/*
- * Written whole, including an empty table: "no bindings" is a configuration an
- * administrator can choose, and a store that skipped an empty one would restore
- * the last non-empty table after a reboot -- a lock that starts unlocking a
- * door its owner unbound. So this record is always LIVE and never DELETED.
- */
-static int store_binding(const struct matter_device_info *info)
-{
-	record_begin(REC_BINDING, REC_LIVE, 0xffu);
-	s_io.binding.table = info->binding;
-	return record_put(TM_KV_KEY_MATTER_MF2_BINDING, sizeof(s_io.binding));
-}
-#endif
-
-/*
- * Written whole, like the binding table, and for the same reason: an emptied
- * table is something a controller chose, and skipping it would bring the old
- * rows back at the next boot.
- */
-static int store_users(const struct matter_device_info *info)
-{
-	record_begin(REC_USERS, REC_LIVE, 0xffu);
-	memcpy(s_io.users.users, info->users, sizeof(s_io.users.users));
-	return record_put(TM_KV_KEY_MATTER_MF2_USERS, sizeof(s_io.users));
-}
-
 int matter_fab_commit(const struct matter_device_info *info,
 		      enum matter_fabric_store_operation operation, uint8_t slot,
 		      const uint8_t *value, size_t value_len)
@@ -477,12 +379,6 @@ int matter_fab_commit(const struct matter_device_info *info,
 	if (rc != TM_KV_OK) {
 		return rc;
 	}
-#if MATTER_FEATURE_CLIENT
-	if (operation == MATTER_FABRIC_STORE_BINDING) {
-		rc = ensure_meta();
-		return rc != 0 ? rc : store_binding(info);
-	}
-#endif
 	if (slot >= MATTER_SUPPORTED_FABRICS) {
 		return -EINVAL;
 	}
@@ -490,22 +386,12 @@ int matter_fab_commit(const struct matter_device_info *info,
 	if (rc != 0) {
 		return rc;
 	}
-	if (operation == MATTER_FABRIC_STORE_USERS) {
-		return store_users(info);
-	}
 	if (operation == MATTER_FABRIC_STORE_ACL) {
 		return store_acl(info, slot, value, value_len);
 	}
 	if (operation == MATTER_FABRIC_STORE_COMMIT_ATTEMPT) {
 		if (info->committed_slots == 0u) {
 			rc = store_network(info);
-			if (rc != 0) {
-				return rc;
-			}
-			/* The first administrator of an empty table. Whatever
-			 * user record an earlier home left behind is replaced
-			 * here, before anything could load it. */
-			rc = store_users(info);
 			if (rc != 0) {
 				return rc;
 			}
@@ -536,10 +422,6 @@ static void clear_identity(struct matter_device_info *info)
 	memset(info->fabrics, 0, sizeof(info->fabrics));
 	memset(info->fabric_acls, 0, sizeof(info->fabric_acls));
 	memset(&info->icac, 0, sizeof(info->icac));
-#if MATTER_FEATURE_CLIENT
-	memset(&info->binding, 0, sizeof(info->binding));
-#endif
-	memset(info->users, 0, sizeof(info->users));
 	info->committed_slots = 0u;
 	info->thread_dataset_len = 0u;
 	info->have_thread_xpanid = false;
@@ -590,10 +472,6 @@ int matter_fab_load(struct matter_device_info *info)
 	s_network_state = 0u;
 	s_icac_epoch = 0u;
 	s_icac_state = 0u;
-#if MATTER_FEATURE_CLIENT
-	s_binding_epoch = 0u;
-	s_binding_state = 0u;
-#endif
 	s_have_meta = false;
 	rc = load_meta_record();
 	legacy_cleanup();
@@ -605,14 +483,6 @@ int matter_fab_load(struct matter_device_info *info)
 	if (rc == 0) {
 		rc = load_icac(info);
 	}
-	if (rc == 0) {
-		rc = load_users(info);
-	}
-#if MATTER_FEATURE_CLIENT
-	if (rc == 0) {
-		rc = load_binding(info);
-	}
-#endif
 	for (uint8_t i = 0u; rc == 0 && i < MATTER_SUPPORTED_FABRICS; i++) {
 		rc = load_fabric(info, i);
 		if (rc == 0) {
@@ -647,22 +517,6 @@ int matter_fab_load(struct matter_device_info *info)
 		clear_identity(info);
 		return 1;
 	}
-#if MATTER_FEATURE_CLIENT
-	/*
-	 * A table from a superseded epoch is not this node's, and an entry
-	 * naming a fabric that did not survive the checks above would unlock a
-	 * door for an administrator this node no longer has.
-	 */
-	if (s_binding_epoch != s_epoch || s_binding_state != REC_LIVE) {
-		memset(&info->binding, 0, sizeof(info->binding));
-	} else {
-		for (uint8_t i = 1u; i <= MATTER_SUPPORTED_FABRICS; i++) {
-			if (!used_index[i]) {
-				matter_binding_forget_fabric(&info->binding, i);
-			}
-		}
-	}
-#endif
 	icac_valid = s_icac_epoch == s_epoch && s_icac_state == REC_LIVE &&
 		     info->icac.len > 0u && info->icac.owner_index > 0u &&
 		     info->icac.owner_index <= MATTER_SUPPORTED_FABRICS &&
@@ -713,11 +567,7 @@ int matter_fab_load(struct matter_device_info *info)
 	return 0;
 }
 
-#if MATTER_FEATURE_CLIENT
-#define EPOCH_SCAN_FIXED 4u
-#else
 #define EPOCH_SCAN_FIXED 3u
-#endif
 #define EPOCH_SCAN_MAX (EPOCH_SCAN_FIXED + 2u * MATTER_SUPPORTED_FABRICS)
 
 struct epoch_scan {
@@ -754,9 +604,6 @@ int matter_fab_erase(void)
 	scan_epoch(TM_KV_KEY_MATTER_MF2_META, sizeof(s_io.meta), &scan);
 	scan_epoch(TM_KV_KEY_MATTER_MF2_NET, sizeof(s_io.network), &scan);
 	scan_epoch(TM_KV_KEY_MATTER_MF2_ICAC, sizeof(s_io.icac), &scan);
-#if MATTER_FEATURE_CLIENT
-	scan_epoch(TM_KV_KEY_MATTER_MF2_BINDING, sizeof(s_io.binding), &scan);
-#endif
 	for (uint8_t i = 0u; i < MATTER_SUPPORTED_FABRICS; i++) {
 		scan_epoch(TM_KV_KEY_MATTER_MF2_FAB0 + i,
 			   sizeof(s_io.fabric), &scan);
@@ -798,8 +645,7 @@ int matter_fab_erase(void)
 /* Separate keys from the operational identity. These values survive selective
  * fabric removal and Matter-only erase. */
 
-int matter_dl_attr_store(const struct matter_device_info *info, uint32_t prev_auto_relock_s,
-			 uint8_t prev_approach_direction)
+int matter_dl_attr_store(const struct matter_device_info *info, uint32_t prev_auto_relock_s)
 {
 	int first_err = 0;
 	int rc;
@@ -819,21 +665,12 @@ int matter_dl_attr_store(const struct matter_device_info *info, uint32_t prev_au
 			first_err = rc;
 		}
 	}
-	if (info->approach_direction != prev_approach_direction) {
-		rc = tm_kv_set(TM_KV_KEY_MATTER_DL_APPROACH,
-					  &info->approach_direction,
-					  sizeof(info->approach_direction));
-		if (rc != 0 && first_err == 0) {
-			first_err = rc;
-		}
-	}
 	return first_err;
 }
 
 int matter_dl_attr_load(struct matter_device_info *info)
 {
 	uint32_t relock;
-	uint8_t approach;
 	size_t len;
 
 	if (info == NULL) {
@@ -846,55 +683,6 @@ int matter_dl_attr_load(struct matter_device_info *info)
 	    len == sizeof(relock)) {
 		info->auto_relock_time_s = relock;
 	}
-	len = sizeof(approach);
-	if (tm_kv_get(TM_KV_KEY_MATTER_DL_APPROACH,
-				 &approach, &len) == TM_KV_OK &&
-	    len == sizeof(approach)) {
-		info->approach_direction = approach;
-	}
-	return 0;
-}
-
-int matter_uwb_config_store(const struct matter_uwb_config *config,
-			    const struct matter_uwb_config *previous)
-{
-	if (config == NULL || previous == NULL) {
-		return -EINVAL;
-	}
-	if (memcmp(config, previous, sizeof(*config)) == 0) {
-		return 0;
-	}
-	return tm_kv_set(TM_KV_KEY_MATTER_UWB_CONFIG,
-				     config, sizeof(*config));
-}
-
-int matter_uwb_config_load(struct matter_uwb_config *config)
-{
-	struct matter_uwb_config stored;
-	size_t len = sizeof(stored);
-
-	if (config == NULL) {
-		return -EINVAL;
-	}
-	(void)tm_kv_init();
-	if (tm_kv_get(TM_KV_KEY_MATTER_UWB_CONFIG,
-				 &stored, &len) == TM_KV_OK &&
-	    len == sizeof(stored) &&
-	    (stored.version == 1u || stored.version == MATTER_UWB_CONFIG_VERSION) &&
-	    stored.unlock_cm >= 20u && stored.unlock_cm < stored.approach_cm &&
-	    stored.approach_cm < stored.relock_cm && stored.relock_cm <= 1000u &&
-	    stored.motor_ms >= 100u && stored.motor_ms <= 5000u &&
-	    (stored.version == 1u ||
-	     (stored.policy_flags & (uint8_t)~MATTER_UWB_POLICY_ALL) == 0u)) {
-		if (stored.version == 1u) {
-			stored.policy_flags = (stored.policy_flags != 0u
-					       ? MATTER_UWB_POLICY_BOUND_RELOCK : 0u) |
-					      (MATTER_UWB_POLICY_ALL &
-					       (uint8_t)~MATTER_UWB_POLICY_BOUND_RELOCK);
-			stored.version = MATTER_UWB_CONFIG_VERSION;
-		}
-		*config = stored;
-	}
 	return 0;
 }
 
@@ -902,8 +690,6 @@ int matter_dl_attr_erase(void)
 {
 	static const uint16_t keys[] = {
 		TM_KV_KEY_MATTER_DL_AUTO_RELOCK,
-		TM_KV_KEY_MATTER_DL_APPROACH,
-		TM_KV_KEY_MATTER_UWB_CONFIG,
 	};
 	int first_err = 0;
 	int rc = tm_kv_init();
