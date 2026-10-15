@@ -95,4 +95,7 @@ if(CONFIG_TINYMATTER)
     zephyr_library_sources(${CMAKE_CURRENT_SOURCE_DIR}/backends/mbedtls/tm_spake2p_mbedtls.c)
   endif()
 
+  # The Zephyr port: BLE transport, fabric store, node glue, Thread or its stub.
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ports/zephyr)
+
 endif(CONFIG_TINYMATTER)

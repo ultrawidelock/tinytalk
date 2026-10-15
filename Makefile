@@ -84,6 +84,7 @@ $(BUILD)/host_test_$(SPAKE)_asan: $(CORE_SRCS) $(TEST_SRCS) $(HDRS) $(SPAKE_OBJ_
 
 test: $(BUILD)/host_test_$(SPAKE)
 	$(BUILD)/host_test_$(SPAKE)
+	tests/ports/zephyr/matter_srp_lifecycle_check.sh
 
 asan: $(BUILD)/host_test_$(SPAKE)_asan
 	$(BUILD)/host_test_$(SPAKE)_asan

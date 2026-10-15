@@ -115,3 +115,248 @@ config TINYMATTER_SPAKE2P_MBEDTLS
 	  MBEDTLS_PSA_CRYPTO_C in the Mbed TLS configuration.
 
 endchoice
+
+# ---- the Zephyr port (ports/zephyr) ------------------------------------------
+# Carried from the source project's application Kconfig, where these lived
+# beside the app that used them.
+
+config TINYMATTER_BLE
+	bool "Matter commissioning transport: the 0xFFF6 GATT service over BTP"
+	# The framing itself is in the core (src/) and has no Zephyr
+	# dependency; this brings in the Zephyr-side adapter that carries it.
+	depends on BT_PERIPHERAL
+	select TINYMATTER
+	default n
+	help
+	  Compile the 0xFFF6 service (C1 write, C2 indicate) and the BTP glue
+	  that turns it into a Matter message transport.
+
+	  This does not start advertising. The application owns the single
+	  advertising set and asks this transport for the commissionable payload
+	  while the node has no fabric -- see TINYMATTER_DISCRIMINATOR.
+
+if TINYMATTER_BLE
+
+config TINYMATTER_DISCRIMINATOR
+	hex "Matter setup discriminator, 12-bit"
+	default 0xF00
+	range 0x000 0xFFF
+	help
+	  Goes out in the commissionable advertisement, and a commissioner uses
+	  it to pick this device out of everything else advertising 0xFFF6. It
+	  must match the discriminator encoded in the setup code the user enters
+	  or the phone will never connect.
+
+	  0xF00 with passcode 20202021 is the pairing CHIP's own test harnesses
+	  use, which makes a bench commissioner work with no extra setup.
+
+config TINYMATTER_VENDOR_ID
+	hex "Matter vendor ID"
+	default 0xFFF1
+	help
+	  0xFFF1 is CHIP's test vendor. A real product needs an allocated one;
+	  a phone will commission a test VID but marks the result uncertified.
+
+config TINYMATTER_PRODUCT_ID
+	hex "Matter product ID"
+	default 0x8001
+
+config TINYMATTER_SPAKE2P_VERIFIER
+	string "SPAKE2+ verifier, hex: w0 (32 B) then L (65 B)"
+	default "ca92f10ad437760cc8948aefe2d09f142bc1a363824a0079a63e6df097575bb5043609715ad65a53cd3c18a0f80011bf09dbbfbd9453c2b00eed286f5275ecaae60a2e896837995232334c319994d790ee2d09fe5cb4a229503234f8479eb3d308"
+	help
+	  What the device stores INSTEAD of the setup passcode. Someone who reads
+	  this out of flash can verify a commissioner that knows the passcode and
+	  cannot impersonate one, which is the point of SPAKE2+'s augmented form.
+
+	  Generate with scripts/spake2p_verifier.py --passcode <p>, which prints
+	  this and the two options below. It must be derived from the
+	  same passcode, salt and iteration count as the two options below --
+	  nothing on the device can check that it was, and a mismatched set fails
+	  at Pake3 looking exactly like a wrong passcode.
+
+	  The default was CHIP's own published test verifier for passcode 20202021
+	  (TestOnlyCommissionableDataProvider.h:74-79). It is not any more: these
+	  values are the source project's own, generated once with the script above. That
+	  removes the case where a stranger commissions the lock knowing nothing
+	  but the SDK.
+
+	  IT IS STILL ONE PAIRING FOR EVERY BOARD BUILT FROM THIS TREE, and a
+	  binary release has to publish its setup code because nothing on the
+	  device can print it. Per-board codes need per-board provisioning data,
+	  which this build does not have. If the lock guards anything, generate
+	  your own with the script and rebuild.
+
+config TINYMATTER_SETUP_PASSCODE
+	int "Setup passcode the verifier above was derived from"
+	default 58490394
+	range 1 134217727
+	help
+	  The number a user would type into Apple Home. No C file in the module
+	  reads it, so the passcode stays out of a module-only image exactly as
+	  the augmented SPAKE2+ form intends.
+
+	  It is here because the setup code cannot be recovered from the
+	  verifier, and a build that cannot say how to commission itself is a
+	  build nobody can use. samples/door-lock runs
+	  scripts/spake2p_verifier.py --from-config at build time: it re-derives
+	  the verifier from this passcode, refuses to continue if the two
+	  disagree (the drift check the device itself cannot do), and compiles
+	  the 11-digit manual code into the sample's boot log. A sample image
+	  therefore carries the code.
+
+	  Change it and CONFIG_TINYMATTER_SPAKE2P_VERIFIER together, both from
+	  one run of scripts/spake2p_verifier.py --passcode <p>.
+
+config TINYMATTER_SPAKE2P_SALT
+	string "SPAKE2+ salt, hex (16 to 32 bytes)"
+	default "04f7398d5b49b5b5db8a5e61c8aece1d1a230e3b9085199d854ef034fd30a89b"
+	help
+	  Sent to the commissioner in PBKDFParamResponse so it can repeat the
+	  derivation. It was CHIP's test salt, the ASCII "SPAKE2P Key Salt"; it is
+	  now 32 random bytes generated with the passcode above.
+
+config TINYMATTER_SPAKE2P_ITERATIONS
+	int "SPAKE2+ PBKDF2 iterations"
+	default 20000
+	range 1000 100000
+	help
+	  Also sent in PBKDFParamResponse. Costs the COMMISSIONER time, not this
+	  device: the verifier is derived off-device, so a high count is paid by
+	  the phone once per pairing, in milliseconds.
+
+	  20000 rather than the 1000 floor. It raises the cost of brute-forcing
+	  the passcode back out of a verifier read from flash, which matters here
+	  because APPROTECT is deliberately unlocked. Be clear about how much it
+	  buys, though: anyone who can dump flash can also read settings_storage,
+	  where the source project's reader private key sat in the clear, so this hardens the
+	  slower of two paths. The lever that closes both is physical security.
+
+config TINYMATTER_BLE_RX_BUF
+	int "Inbound Matter message ceiling, bytes"
+	default 1024
+	help
+	  Size of the BTP reassembly area, and therefore the largest message
+	  this node will accept. A peer declaring more than this in its Start
+	  fragment is refused before a byte is copied, so setting it low costs
+	  compatibility, never memory safety.
+
+config TINYMATTER_BLE_WINDOW
+	int "Largest BTP receive window we will grant"
+	default 4
+	range 2 8
+
+config TINYMATTER_BLE_WQ_STACK
+	int "Matter work queue stack, bytes"
+	default 4096
+	help
+	  PROVISIONAL. Two stack sizes in this project were guessed low and both
+	  faulted on hardware, so size this from CONFIG_THREAD_ANALYZER_AUTO
+	  output rather than by estimate.
+
+	  Raised from 2048 when PASE was wired up, because handling Pake1 is by
+	  far the deepest thing this queue does: a 128-byte reply buffer, then
+	  matter_pase_sm.c's frame holding pA, pB, Z and V (4 x 65 B) and a
+	  SPAKE2+ result, then oberon's P-256 scalar multiplication underneath
+	  all of it. That is an argument, not a measurement, which is exactly the
+	  reasoning the note above says not to trust -- so measure it and trim.
+
+config TINYMATTER_BLE_WQ_PRIO
+	int "Matter work queue thread priority"
+	default 10
+	help
+	  In the source project this had to stay BELOW the UWB ranging work: its
+	  Stage 0 measured a CASE handshake at 262.7 ms of solid CPU against a
+	  0.66 ms reply margin, and ranging survived only because the load sat at
+	  a lower priority.
+
+module = TINYMATTER_BLE
+module-str = matter_ble
+source "subsys/logging/Kconfig.template.log_config"
+
+# THREAD logs separately from matter_ble. matter_thread_port.c
+# and matter_dns_port.c narrate SRP registration and DNS-SD resolution, which is
+# how "the bound lock did not resolve" gets diagnosed; matter_ble carries
+# commissioning and fabric handling. Sharing one symbol meant neither could be
+# turned down or up without the other.
+module = TINYMATTER_THREAD
+module-str = matter_thread
+source "subsys/logging/Kconfig.template.log_config"
+
+endif # TINYMATTER_BLE
+
+config TINYMATTER_SRP_DIAG
+	bool "Report the SRP client's state every time network data changes"
+	# OPENTHREAD, not NET_L2_OPENTHREAD: this reads otSrpClient* state out of
+	# matter_thread_port.c and touches no net_if, so it survived the move to
+	# standalone OpenThread. It has to say so explicitly: a `depends on` that
+	# can no longer be satisfied turns a request for SRP diagnostics into a
+	# build with none and no error to say why.
+	depends on OPENTHREAD
+	default n
+	help
+	  Diagnosis only, never shipped. Answers one question the existing logs
+	  cannot: whether otSrpClientEnableAutoStartMode() ever FOUND a server.
+
+	  A registration that is never sent looks exactly like one that was sent
+	  and refused -- both leave the host and services sitting at ToAdd and
+	  neither reaches srp_cb(), so the only "SRP failed" line this firmware
+	  can print is one that never fires. Measured on hardware 2026-08-03:
+	  three minutes as an attached child with a working OMR address, both
+	  services queued at ToAdd, and OpenThread's own INFO log carrying no
+	  server selection at all.
+
+	  Auto-start picks its server out of Thread network data, so network
+	  data changing is the only moment the answer can change. Prints
+	  otSrpClientIsRunning(), the chosen server address and the host state
+	  on each OT_CHANGED_THREAD_NETDATA. Running means the fault is after
+	  server selection; not running once network data has settled means this
+	  node is never offered a server -- see ports/zephyr/thread/matter_thread_port.c.
+
+config TINYMATTER_THREAD_DATASET_DUMP
+	bool "Print the active Thread operational dataset at attach (BENCH ONLY)"
+	depends on OPENTHREAD
+	default n
+	help
+	  Logs the active operational dataset as hex in the raw TLV form
+	  `chip-tool pairing ble-thread` takes, when the commissioning window
+	  opens -- a button press, not every attach. Tying it to a gesture the
+	  owner just made is deliberate.
+
+	  THIS PRINTS THE THREAD NETWORK KEY IN THE CLEAR. Whoever reads that log
+	  can join the network. It exists for one bench job: commissioning a second
+	  Matter administrator over BLE, which needs a dataset argument, and the
+	  only safe dataset to pass is the one the node is already on -- anything
+	  else moves the node to a different network and takes it out of its home.
+
+	  Default n and it must stay that way in anything that ships. There is no
+	  runtime gate: a build either discloses the key on every attach or cannot.
+
+config TINYMATTER_THREAD
+	bool "Thread transport: attach, SRP registration and operational UDP"
+	depends on TINYMATTER_BLE && OPENTHREAD
+	default n
+	help
+	  Compile ports/zephyr/thread/: the node joins the Thread network a
+	  commissioner hands it, registers its operational service over SRP and
+	  carries Matter over UDP on port 5540.
+
+	  Off, the Thread seams resolve to ports/zephyr/matter_thread_stub.c,
+	  which answers as a node with no network: the stack cannot be started
+	  and the node never attaches, so a commissioner that sends a Thread
+	  dataset is told so.
+
+config TINYMATTER_CLEAR_ON_BOOT
+	bool "Erase the stored Matter fabrics at boot"
+	depends on TINYMATTER_BLE
+	default n
+	help
+	  Atomically advances the `mf2` identity epoch before it is read, so the
+	  board comes up with no fabric and advertises commissionable.
+
+	  Preferred over `west flash --erase` because it clears everything a
+	  controller can see while leaving OpenThread's own settings alone, so
+	  the board rejoins its Thread network instead of being commissioned
+	  onto one.
+
+	  It erases on EVERY boot. Flash it once, then flash an image without it.
