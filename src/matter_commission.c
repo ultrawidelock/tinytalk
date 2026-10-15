@@ -3430,6 +3430,22 @@ static size_t matter_thread_on_datagram_owned(uint8_t *msg, size_t len, uint8_t 
 	    (ph.opcode == MATTER_PASE_OP_PBKDF_REQ || ph.opcode == MATTER_PASE_OP_PAKE1 ||
 	     ph.opcode == MATTER_PASE_OP_PAKE3)) {
 		/*
+		 * Only while this node is offering itself: no fabric yet, or a
+		 * commissioning window open. The BLE path gets the same rule from
+		 * the advert, which withdraws 0xFFF6 otherwise; over IP nothing
+		 * else stands in the way. Without this, anything that can reach
+		 * the node over IPv6 and knows the setup code (the same on every
+		 * board built from this tree) can run PASE at any time and add
+		 * itself as an administrator. Observed 2026-10-16: a window opened
+		 * with the button, then a reboot closed it, and a commissioner
+		 * still ran PASE over Thread and added a fabric.
+		 */
+		if (s_admin_window == MATTER_ADMIN_WINDOW_NOT_OPEN &&
+		    atomic_load(&s_has_fabric_snapshot) != 0) {
+			TM_LOG_WRN("  PASE over IP refused: no commissioning window open");
+			return 0u;
+		}
+		/*
 		 * PBKDFParamRequest is by definition the first message of a new
 		 * PASE, so whatever the last commissioner left on s_exchange is
 		 * finished with. Over BLE the disconnect says this; over IP

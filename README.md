@@ -106,8 +106,8 @@ flash for settings, which leaves a 496 KB application partition:
 
 | Board | Flash | RAM |
 |---|---|---|
-| decawave_dwm3001cdk | 340,196 B of 496 KB (66.98%) | 101,792 B of 128 KB (77.66%) |
-| nrf52833dk/nrf52833 | 340,440 B of 496 KB (67.03%) | 101,792 B of 128 KB (77.66%) |
+| decawave_dwm3001cdk | 340,300 B of 496 KB (67.00%) | 101,792 B of 128 KB (77.66%) |
+| nrf52833dk/nrf52833 | 340,544 B of 496 KB (67.05%) | 101,792 B of 128 KB (77.66%) |
 
 ## License
 
