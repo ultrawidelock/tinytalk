@@ -103,6 +103,14 @@ west flash --erase -d <build-dir>
 
 Use `-b nrf52833dk/nrf52833` for the nRF52833 DK. Logs go to SEGGER RTT.
 
+For a release image, add `overlay-release.conf`: no logging, no RTT console,
+no Bluetooth asserts, 22,004 B less flash. It says nothing over RTT, so debug
+with the plain build.
+
+```
+west build -b decawave_dwm3001cdk -d <build-dir> <repo>/samples/door-lock -- -DEXTRA_CONF_FILE=overlay-release.conf
+```
+
 The sample uses the board's `led0` and `sw0`. LED0 is on while the door is
 unlocked. A short press of the button opens a 15-minute commissioning window;
 holding it for 5 s erases the fabrics and reboots. On the DWM3001CDK, `led0`
@@ -148,15 +156,21 @@ application partition:
 |---|---|---|
 | decawave_dwm3001cdk | 309,284 B of 496 KB (60.89%) | 101,984 B of 128 KB (77.81%) |
 | nrf52833dk/nrf52833 | 309,496 B of 496 KB (60.94%) | 101,984 B of 128 KB (77.81%) |
+| decawave_dwm3001cdk, `overlay-release.conf` | 287,280 B of 496 KB (56.56%) | 93,408 B of 128 KB (71.26%) |
+| nrf52833dk/nrf52833, `overlay-release.conf` | 287,312 B of 496 KB (56.57%) | 93,408 B of 128 KB (71.26%) |
 
-What the two size levers are worth on the DWM3001CDK, all from one source
+What the size levers are worth on the DWM3001CDK, all from one source
 state:
 
 | Build | Flash | RAM |
 |---|---|---|
 | As shipped | 309,284 B | 101,984 B |
 | tinymatter's logs off | 298,476 B | 101,984 B |
+| `overlay-release.conf` (every log off, RTT off) | 287,280 B | 93,408 B |
+| `overlay-release.conf` and Thread 1.1 instead of 1.4 | 282,336 B | 93,024 B |
 | LTO off | 342,744 B | 102,048 B |
+
+Thread 1.1 was only measured, not run: the sample stays on 1.4.
 
 Logs off is `-DCONFIG_TINYMATTER_LOG_LEVEL_OFF=y
 -DCONFIG_TINYMATTER_BLE_LOG_LEVEL_OFF=y
