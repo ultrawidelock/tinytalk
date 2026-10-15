@@ -92,6 +92,12 @@ west flash --erase -d <build-dir>
 
 Use `-b nrf52833dk/nrf52833` for the nRF52833 DK. Logs go to SEGGER RTT.
 
+The sample uses the board's `led0` and `sw0`. LED0 is on while the door is
+unlocked. A short press of the button opens a 15-minute commissioning window;
+holding it for 5 s erases the fabrics and reboots. On the DWM3001CDK, `led0`
+is D9 (green) and `sw0` is SW2. SW1 is the hardware reset: it reboots and
+erases nothing.
+
 ## Sizes
 
 Measured 2026-10-16 from the linker's memory-region report, building
