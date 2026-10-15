@@ -35,6 +35,13 @@ These are public test credentials. The private key is published, so anyone
 can sign as this DAC. Every device built from this repository is an
 uncertified test accessory, and a commissioner will say so.
 
+connectedhomeip SPAKE2+ test vectors (Apache-2.0)
+-------------------------------------------------
+
+tests/host/test_spake2p_mbedtls.c copies the four test vectors in
+connectedhomeip's src/crypto/tests/SPAKE2P_RFC_test_vectors.h
+(draft-bar-cfrg-spake2plus-01), under the same Apache License, Version 2.0.
+
 Apache License, Version 2.0
 ---------------------------
 

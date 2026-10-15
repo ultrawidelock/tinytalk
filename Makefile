@@ -35,26 +35,58 @@ HDRS := $(wildcard include/tinymatter/*.h tests/host/*.h tests/host/*/*.h)
 TEST_DEFS := -D_DEFAULT_SOURCE -DMATTER_FEATURE_DL_ALARMS=1 -DMATTER_FEATURE_CLIENT=1 \
 	-DMATTER_FEATURE_MULTI_ADMIN=1 -DTINYMATTER_VENDOR_CLUSTERS=1
 TEST_INCS := $(INCS) -Itests/host
+
+# The SPAKE2+ curve under the host suite.
+#   SPAKE=mbedtls (default): backends/mbedtls on an installed Mbed TLS 3.6,
+#     linked under spakefake_real_* behind spakefake's pass-through, so the
+#     recorded exchange still checks every call and the curve is real.
+#   SPAKE=fake: spakefake replays the one recorded exchange. No library.
+# MBEDTLS_PREFIX is where Mbed TLS 3.6 is installed: include/ and lib/.
+SPAKE ?= mbedtls
+MBEDTLS_PREFIX ?= $(shell brew --prefix mbedtls@3 2>/dev/null || echo /usr)
+SPAKE_RENAME := $(foreach f,reduce check_key get_key_share get_ZV,-Docrypto_spake2p_p256_$(f)=spakefake_real_$(f))
+ifeq ($(SPAKE),fake)
+TEST_SRCS := $(filter-out tests/host/test_spake2p_mbedtls.c,$(wildcard tests/host/*.c)) tests/host/spakefake/spakefake.c
+SPAKE_DEFS :=
+SPAKE_LIBS :=
+else
 TEST_SRCS := $(wildcard tests/host/*.c) tests/host/spakefake/spakefake.c
+SPAKE_DEFS := -DSPAKEFAKE_PASSTHROUGH
+SPAKE_LIBS := -L$(MBEDTLS_PREFIX)/lib -lmbedcrypto
+endif
 
 # Mach-O prefixes every C symbol with an underscore; ELF does not.
 SYM_PREFIX := $(if $(filter Darwin,$(shell uname -s)),_,)
 
 .PHONY: test asan seams clean
 
-$(BUILD)/host_test: $(CORE_SRCS) $(TEST_SRCS) $(HDRS)
+SPAKE_SRC := backends/mbedtls/tm_spake2p_mbedtls.c
+SPAKE_CFLAGS := $(CSTD) $(WARN) $(GCC_PARITY) $(SPAKE_RENAME) $(INCS) -I$(MBEDTLS_PREFIX)/include
+
+$(BUILD)/spake_mbedtls.o: $(SPAKE_SRC) $(HDRS)
 	@mkdir -p $(@D)
-	$(CC) $(CSTD) $(WARN) $(GCC_PARITY) $(TEST_DEFS) $(TEST_INCS) $(CORE_SRCS) $(TEST_SRCS) -o $@
+	$(CC) $(SPAKE_CFLAGS) -c $< -o $@
 
-$(BUILD)/host_test_asan: $(CORE_SRCS) $(TEST_SRCS) $(HDRS)
+$(BUILD)/spake_mbedtls_asan.o: $(SPAKE_SRC) $(HDRS)
 	@mkdir -p $(@D)
-	$(CC) $(CSTD) $(WARN) $(GCC_PARITY) $(SAN) $(TEST_DEFS) $(TEST_INCS) $(CORE_SRCS) $(TEST_SRCS) -o $@
+	$(CC) $(SPAKE_CFLAGS) $(SAN) -c $< -o $@
 
-test: $(BUILD)/host_test
-	$(BUILD)/host_test
+SPAKE_OBJ := $(if $(filter fake,$(SPAKE)),,$(BUILD)/spake_mbedtls.o)
+SPAKE_OBJ_ASAN := $(if $(filter fake,$(SPAKE)),,$(BUILD)/spake_mbedtls_asan.o)
 
-asan: $(BUILD)/host_test_asan
-	$(BUILD)/host_test_asan
+$(BUILD)/host_test_$(SPAKE): $(CORE_SRCS) $(TEST_SRCS) $(HDRS) $(SPAKE_OBJ)
+	@mkdir -p $(@D)
+	$(CC) $(CSTD) $(WARN) $(GCC_PARITY) $(TEST_DEFS) $(SPAKE_DEFS) $(TEST_INCS) $(CORE_SRCS) $(TEST_SRCS) $(SPAKE_OBJ) $(SPAKE_LIBS) -o $@
+
+$(BUILD)/host_test_$(SPAKE)_asan: $(CORE_SRCS) $(TEST_SRCS) $(HDRS) $(SPAKE_OBJ_ASAN)
+	@mkdir -p $(@D)
+	$(CC) $(CSTD) $(WARN) $(GCC_PARITY) $(SAN) $(TEST_DEFS) $(SPAKE_DEFS) $(TEST_INCS) $(CORE_SRCS) $(TEST_SRCS) $(SPAKE_OBJ_ASAN) $(SPAKE_LIBS) -o $@
+
+test: $(BUILD)/host_test_$(SPAKE)
+	$(BUILD)/host_test_$(SPAKE)
+
+asan: $(BUILD)/host_test_$(SPAKE)_asan
+	$(BUILD)/host_test_$(SPAKE)_asan
 
 # The symbols the core leaves for a backend or a port to provide: everything a
 # matter_*.c object references that none of them defines. tm_hash.c is left

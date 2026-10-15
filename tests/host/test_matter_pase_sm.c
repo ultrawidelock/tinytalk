@@ -5,9 +5,10 @@
  * packets, payload only). The expected answers come from gen_pase_vector.py,
  * which computes Z and V three independent ways and curve-checks M/N read out
  * of matter_spake2p.c, so the vector is agreement between derivations, not one
- * implementation's opinion. The curve is replayed, not computed (see
- * spakefake.c); everything else -- encoding, context hash, transcript,
- * confirmations, session keys -- runs for real here.
+ * implementation's opinion. By default the curve is computed and checked
+ * against the recording; with SPAKE=fake it is replayed (see spakefake.c).
+ * Everything else -- encoding, context hash, transcript, confirmations,
+ * session keys -- runs for real here.
  */
 #include <string.h>
 

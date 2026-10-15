@@ -82,5 +82,17 @@ if(CONFIG_TINYMATTER)
 
   # matter_crypto.c uses tm_hash.h for SHA-256/HKDF, compiled above, and the
   # crypto_aes_ecb_encrypt contract, which a crypto backend provides.
+  #
+  # The crypto seams (see PORTING.md): P-256 and AES-ECB on PSA Crypto, and
+  # SPAKE2+ on either nrf_oberon or Mbed TLS.
+  if(CONFIG_TINYMATTER_CRYPTO_PSA)
+    zephyr_library_sources(${CMAKE_CURRENT_SOURCE_DIR}/backends/psa/tm_psa.c)
+  endif()
+  if(CONFIG_TINYMATTER_SPAKE2P_OBERON)
+    include(${CMAKE_CURRENT_SOURCE_DIR}/backends/oberon/oberon.cmake)
+  endif()
+  if(CONFIG_TINYMATTER_SPAKE2P_MBEDTLS)
+    zephyr_library_sources(${CMAKE_CURRENT_SOURCE_DIR}/backends/mbedtls/tm_spake2p_mbedtls.c)
+  endif()
 
 endif(CONFIG_TINYMATTER)

@@ -83,3 +83,35 @@ config TINYMATTER_DOOR_LOCK_ALARMS
 	  Turn it on only for a lock with a sensor that can witness an alarm.
 	  Off, every source file preprocesses to what it was before alarms
 	  existed, so the default image stays byte-identical.
+
+config TINYMATTER_CRYPTO_PSA
+	bool "P-256 and AES-ECB on PSA Crypto (backends/psa)"
+	depends on TINYMATTER
+	default y
+	help
+	  Provide the five P-256 seams (DAC signing, operational key
+	  generation, CASE ECDH, sign and verify) and crypto_aes_ecb_encrypt()
+	  on PSA Crypto. psa_crypto_init() must run before the node starts.
+	  Turn it off only to supply those six functions from elsewhere.
+
+choice TINYMATTER_SPAKE2P
+	prompt "SPAKE2+ P-256 backend"
+	depends on TINYMATTER
+	default TINYMATTER_SPAKE2P_OBERON if NRF_SECURITY
+	default TINYMATTER_SPAKE2P_MBEDTLS
+
+config TINYMATTER_SPAKE2P_OBERON
+	bool "nrf_oberon (nRF Connect SDK, Nordic parts only)"
+	help
+	  Link the four ocrypto_spake2p_p256_* primitives from nrf_oberon,
+	  which nrf_security already links when its PSA driver is the oberon
+	  one. No code; see backends/oberon/oberon.cmake.
+
+config TINYMATTER_SPAKE2P_MBEDTLS
+	bool "Mbed TLS 3.6 ECP (backends/mbedtls)"
+	help
+	  The same four primitives on Mbed TLS ECP, for any part. Needs
+	  MBEDTLS_ECP_C, MBEDTLS_ECP_DP_SECP256R1_ENABLED and
+	  MBEDTLS_PSA_CRYPTO_C in the Mbed TLS configuration.
+
+endchoice

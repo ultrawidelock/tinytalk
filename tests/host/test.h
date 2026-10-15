@@ -69,5 +69,7 @@ void test_matter_client_sm(void);
 void test_matter_im_client(void);
 void test_matter_binding(void);
 void test_matter_clusters(void);
+/* Only with the real curve; see the Makefile's SPAKE. */
+void test_spake2p_mbedtls(void);
 
 #endif /* TINYMATTER_HOST_TEST_H */

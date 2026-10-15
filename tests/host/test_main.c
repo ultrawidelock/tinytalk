@@ -47,6 +47,9 @@ int main(void)
 		{ "matter_im_client", test_matter_im_client },
 		{ "matter_binding", test_matter_binding },
 		{ "matter_clusters", test_matter_clusters },
+#if defined(SPAKEFAKE_PASSTHROUGH)
+		{ "spake2p_mbedtls", test_spake2p_mbedtls },
+#endif
 	};
 	const int n = (int)(sizeof(suites) / sizeof(suites[0]));
 	/* Sized from the table, not a literal 32: these are indexed by suite, so a

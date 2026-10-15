@@ -9,11 +9,10 @@
  * Matter-specific parts built on them.
  *
  * WHAT IS NOT TESTED HERE: the elliptic curve. matter_spake2p.c calls exactly
- * one oberon primitive, the modular reduction, and tests/host/spakefake
- * supplies a plain shift-and-subtract version of it. The three curve
- * operations -- check_key, get_key_share, get_ZV -- are never invoked by our
- * glue and are deliberately left undefined on the host: a faked curve would
- * prove nothing, so a test that reached for one would fail to link instead.
+ * one oberon primitive, the modular reduction: the real backend's by default,
+ * and with SPAKE=fake a plain shift-and-subtract version in tests/host/spakefake.
+ * The three curve operations -- check_key, get_key_share, get_ZV -- are never
+ * invoked by our glue; test_spake2p_mbedtls.c is where the curve is checked.
  * Z and V therefore arrive as opaque inputs, and this suite treats them so.
  */
 #include <string.h>

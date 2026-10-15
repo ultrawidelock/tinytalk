@@ -9,11 +9,29 @@
  * downstream (transcript, SHA-256, HKDF, confirmations, session keys) runs for
  * real over the recorded points. What this does NOT prove is that oberon
  * computes what the script computed; only the on-target selftest answers that.
+ *
+ * That is the opt-in mode, `make test SPAKE=fake`. The default build defines
+ * SPAKEFAKE_PASSTHROUGH and links a real curve under the spakefake_real_*
+ * names (the Makefile renames the backend's four functions on its compile
+ * line). Then every call goes to the real curve; an armed recording still
+ * refuses the same wrong inputs, and also refuses a real output that differs
+ * from the recorded one.
  */
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 
+#if defined(SPAKEFAKE_PASSTHROUGH)
+void spakefake_real_reduce(uint8_t x[32], const uint8_t *xs, size_t xs_len);
+int spakefake_real_check_key(const uint8_t K[65]);
+int spakefake_real_get_key_share(uint8_t XY[65], const uint8_t w0[32], const uint8_t xy[32],
+				 const uint8_t MN[65]);
+int spakefake_real_get_ZV(uint8_t Z[65], uint8_t V[65], const uint8_t w0[32], const uint8_t w1[32],
+			  const uint8_t xy[32], const uint8_t YX[65], const uint8_t NM[65],
+			  const uint8_t L[65]);
+#endif
+
+#if !defined(SPAKEFAKE_PASSTHROUGH)
 /* The order of the P-256 base point, big-endian (SEC 2, secp256r1 n). */
 static const uint8_t k_order[32] = {
 	0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF,
@@ -49,9 +67,13 @@ static void sub_order(uint8_t a[32])
 		a[i] = (uint8_t)d;
 	}
 }
+#endif
 
 void ocrypto_spake2p_p256_reduce(uint8_t x[32], const uint8_t *xs, size_t xs_len)
 {
+#if defined(SPAKEFAKE_PASSTHROUGH)
+	spakefake_real_reduce(x, xs, xs_len);
+#else
 	uint8_t r[32];
 
 	memset(r, 0, sizeof(r));
@@ -75,6 +97,7 @@ void ocrypto_spake2p_p256_reduce(uint8_t x[32], const uint8_t *xs, size_t xs_len
 	}
 
 	memcpy(x, r, 32u);
+#endif
 }
 
 /* ------------------------------------------------------------- the replay ---
@@ -156,6 +179,9 @@ unsigned spakefake_replay_zv_calls(void)
  */
 int ocrypto_spake2p_p256_check_key(const uint8_t K[65])
 {
+#if defined(SPAKEFAKE_PASSTHROUGH)
+	return spakefake_real_check_key(K);
+#else
 	int nonzero = 0;
 
 	if (K[0] != 0x04u) {
@@ -165,6 +191,7 @@ int ocrypto_spake2p_p256_check_key(const uint8_t K[65])
 		nonzero |= K[i];
 	}
 	return nonzero ? 0 : -1;
+#endif
 }
 
 int ocrypto_spake2p_p256_get_key_share(uint8_t XY[65], const uint8_t w0[32], const uint8_t xy[32],
@@ -173,7 +200,11 @@ int ocrypto_spake2p_p256_get_key_share(uint8_t XY[65], const uint8_t w0[32], con
 	g_replay.key_share_calls++;
 
 	if (!g_replay.armed) {
+#if defined(SPAKEFAKE_PASSTHROUGH)
+		return spakefake_real_get_key_share(XY, w0, xy, MN);
+#else
 		return refuse("get_key_share with no recording armed");
+#endif
 	}
 	if (memcmp(w0, g_replay.w0, 32u) != 0) {
 		return refuse("get_key_share got a w0 that is not the verifier's");
@@ -187,7 +218,16 @@ int ocrypto_spake2p_p256_get_key_share(uint8_t XY[65], const uint8_t w0[32], con
 		return refuse("get_key_share got M where the responder must pass N");
 	}
 
+#if defined(SPAKEFAKE_PASSTHROUGH)
+	if (spakefake_real_get_key_share(XY, w0, xy, MN) != 0) {
+		return refuse("the curve refused the recorded key share");
+	}
+	if (memcmp(XY, g_replay.pb, 65u) != 0) {
+		return refuse("the curve's key share is not the recorded pB");
+	}
+#else
 	memcpy(XY, g_replay.pb, 65u);
+#endif
 	return 0;
 }
 
@@ -198,7 +238,11 @@ int ocrypto_spake2p_p256_get_ZV(uint8_t Z[65], uint8_t V[65], const uint8_t w0[3
 	g_replay.zv_calls++;
 
 	if (!g_replay.armed) {
+#if defined(SPAKEFAKE_PASSTHROUGH)
+		return spakefake_real_get_ZV(Z, V, w0, w1, xy, YX, NM, L);
+#else
 		return refuse("get_ZV with no recording armed");
+#endif
 	}
 	/* ocrypto_spake2p_p256.h:83,87 -- w1 is NULL on the server side and L is
 	 * NULL on the client side. Supplying the wrong one computes the wrong
@@ -226,7 +270,16 @@ int ocrypto_spake2p_p256_get_ZV(uint8_t Z[65], uint8_t V[65], const uint8_t w0[3
 		return refuse("get_ZV got N where the responder must pass M");
 	}
 
+#if defined(SPAKEFAKE_PASSTHROUGH)
+	if (spakefake_real_get_ZV(Z, V, w0, w1, xy, YX, NM, L) != 0) {
+		return refuse("the curve refused the recorded ZV");
+	}
+	if (memcmp(Z, g_replay.z, 65u) != 0 || memcmp(V, g_replay.v, 65u) != 0) {
+		return refuse("the curve's Z or V is not the recorded one");
+	}
+#else
 	memcpy(Z, g_replay.z, 65u);
 	memcpy(V, g_replay.v, 65u);
+#endif
 	return 0;
 }
