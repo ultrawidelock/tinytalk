@@ -1545,10 +1545,13 @@ static uint8_t s_sub_next_victim;
  * every change, whatever it covered; the stored paths exist to build the
  * PRIMING report, and a resumed subscription does not prime.
  *
- * UNPROVEN against a real controller: Apple may refuse a ReportData whose
- * subscription id it considers bound to the session that died. Its
- * StatusResponse says so either way, and the log lines below name which
- * happened -- that is the whole experiment.
+ * Measured 2026-10-16 against Apple Home, two controllers, one SW1 reset: they
+ * sent 14 messages to the dead sessions, then ran CASE again, and both stored
+ * subscriptions were rebound. Unlock and lock were reported on a rebound id
+ * and each StatusResponse was a success, so Apple accepts a subscription id
+ * carried over to a new session. One controller subscribed afresh right
+ * after its rebind; sub_alloc() reuses the session's slot, so the new
+ * subscription replaces the rebound one and nothing is reported twice.
  */
 
 /**
