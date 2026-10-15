@@ -140,13 +140,33 @@ Pass the application's endpoint table to `matter_commission_init()`; PORTING.md
 ## Sizes
 
 Measured 2026-10-16 from the linker's memory-region report, building
-`samples/door-lock` with nRF Connect SDK v3.3.0. The sample takes 16 KB of
-flash for settings, which leaves a 496 KB application partition:
+`samples/door-lock` as shipped (LTO on, logs at INF) with nRF Connect SDK
+v3.3.0. The sample takes 16 KB of flash for settings, which leaves a 496 KB
+application partition:
 
 | Board | Flash | RAM |
 |---|---|---|
-| decawave_dwm3001cdk | 342,596 B of 496 KB (67.45%) | 102,048 B of 128 KB (77.86%) |
-| nrf52833dk/nrf52833 | 342,840 B of 496 KB (67.50%) | 102,048 B of 128 KB (77.86%) |
+| decawave_dwm3001cdk | 309,284 B of 496 KB (60.89%) | 101,984 B of 128 KB (77.81%) |
+| nrf52833dk/nrf52833 | 309,496 B of 496 KB (60.94%) | 101,984 B of 128 KB (77.81%) |
+
+What the two size levers are worth on the DWM3001CDK, all from one source
+state:
+
+| Build | Flash | RAM |
+|---|---|---|
+| As shipped | 309,284 B | 101,984 B |
+| tinymatter's logs off | 298,476 B | 101,984 B |
+| LTO off | 342,744 B | 102,048 B |
+
+Logs off is `-DCONFIG_TINYMATTER_LOG_LEVEL_OFF=y
+-DCONFIG_TINYMATTER_BLE_LOG_LEVEL_OFF=y
+-DCONFIG_TINYMATTER_THREAD_LOG_LEVEL_OFF=y`; the node then says nothing on RTT.
+
+Of the image without LTO (commit 30a8600), the linker map puts 65,740 B of
+flash and 28,548 B of RAM in tinymatter: the node, the Door Lock module, the
+PSA backend and the Zephyr port. The rest is OpenThread (75 KB), the BLE
+controller and host (71 KB), the 802.15.4 driver (25 KB), nrf_oberon (18 KB)
+and Zephyr.
 
 ## License
 
