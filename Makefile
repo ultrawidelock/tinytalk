@@ -10,7 +10,13 @@ export LC_ALL := C
 BUILD := build/host
 
 CSTD := -std=c11 -O1
-WARN := -Wall -Werror
+# Zephyr's clang warning_base (zephyr/cmake/compiler/clang/compiler_flags.cmake),
+# which is what the source's firmware build compiles these files under, plus
+# -Werror.
+WARN := -Wall -Wformat -Wformat-security -Wno-format-zero-length \
+	-Wno-unused-but-set-variable -Wno-typedef-redefinition \
+	-Wno-deprecated-non-prototype -Wdouble-promotion -Wno-pointer-sign \
+	-Wpointer-arith -Werror
 # Shapes clang merely warns about and GCC rejects outright, promoted so a clang
 # run fails where a GCC one would. Probed, because GCC errors on an unknown
 # -Werror= name and already treats these as errors.
@@ -19,23 +25,35 @@ SAN := -g -fsanitize=address,undefined -fno-sanitize-recover=all
 
 INCS := -Iinclude
 CORE_SRCS := $(wildcard src/*.c)
-TEST_SRCS := $(wildcard tests/host/*.c)
+HDRS := $(wildcard include/tinymatter/*.h tests/host/*.h tests/host/*/*.h)
+
+# The host suite turns every optional surface on, as the source's host build
+# did: these tests exist to pin down the encoding of those surfaces, and the
+# alternative is a feature whose only proof is on a board.
+# _DEFAULT_SOURCE: glibc hides clock_gettime/CLOCK_MONOTONIC under strict
+# -std=c11 without it; Darwin headers ignore it.
+TEST_DEFS := -D_DEFAULT_SOURCE -DMATTER_FEATURE_DL_ALARMS=1 -DMATTER_FEATURE_CLIENT=1 \
+	-DMATTER_FEATURE_MULTI_ADMIN=1 -DTINYMATTER_VENDOR_CLUSTERS=1
+TEST_INCS := $(INCS) -Itests/host
+TEST_SRCS := $(wildcard tests/host/*.c) tests/host/spakefake/spakefake.c
 
 # Mach-O prefixes every C symbol with an underscore; ELF does not.
 SYM_PREFIX := $(if $(filter Darwin,$(shell uname -s)),_,)
 
 .PHONY: test asan seams clean
 
-test:
-	@if [ -z "$(strip $(TEST_SRCS))" ]; then echo "make test: no host tests yet"; exit 0; fi; \
-	mkdir -p $(BUILD) && \
-	$(CC) $(CSTD) $(WARN) $(GCC_PARITY) $(INCS) $(CORE_SRCS) $(TEST_SRCS) -o $(BUILD)/host_test && \
+$(BUILD)/host_test: $(CORE_SRCS) $(TEST_SRCS) $(HDRS)
+	@mkdir -p $(@D)
+	$(CC) $(CSTD) $(WARN) $(GCC_PARITY) $(TEST_DEFS) $(TEST_INCS) $(CORE_SRCS) $(TEST_SRCS) -o $@
+
+$(BUILD)/host_test_asan: $(CORE_SRCS) $(TEST_SRCS) $(HDRS)
+	@mkdir -p $(@D)
+	$(CC) $(CSTD) $(WARN) $(GCC_PARITY) $(SAN) $(TEST_DEFS) $(TEST_INCS) $(CORE_SRCS) $(TEST_SRCS) -o $@
+
+test: $(BUILD)/host_test
 	$(BUILD)/host_test
 
-asan:
-	@if [ -z "$(strip $(TEST_SRCS))" ]; then echo "make asan: no host tests yet"; exit 0; fi; \
-	mkdir -p $(BUILD) && \
-	$(CC) $(CSTD) $(WARN) $(GCC_PARITY) $(SAN) $(INCS) $(CORE_SRCS) $(TEST_SRCS) -o $(BUILD)/host_test_asan && \
+asan: $(BUILD)/host_test_asan
 	$(BUILD)/host_test_asan
 
 # The symbols the core leaves for a backend or a port to provide: everything a
