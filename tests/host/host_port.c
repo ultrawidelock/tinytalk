@@ -19,6 +19,8 @@
 #include <tinymatter/tm_kv.h>
 #include <tinymatter/tm_platform.h>
 
+#include "host_port.h"
+
 /* ---- tm_platform.h -------------------------------------------------------- */
 
 void tm_lock(void)
@@ -220,9 +222,13 @@ void matter_commission_readvertise(void)
 {
 }
 
+uint8_t g_host_lock_state;
+int g_host_lock_state_calls;
+
 void matter_commission_lock_state(uint8_t lock_state)
 {
-	(void)lock_state;
+	g_host_lock_state = lock_state;
+	g_host_lock_state_calls++;
 }
 
 /* ---- the Thread seams the node adds ------------------------------------------ */

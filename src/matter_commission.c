@@ -92,6 +92,9 @@ static void s_info_defaults(void)
 {
 	s_info.vendor_id = s_cfg->vendor_id;
 	s_info.product_id = s_cfg->product_id;
+	/* Until a stored value says otherwise. The sample's bolt powers up
+	 * locked, and 0 (NotFullyLocked) is what a jammed bolt reports. */
+	s_info.lock_state = MATTER_DL_LOCK_STATE_LOCKED;
 	s_info.breadcrumb = 0u;
 	s_info.regulatory_config = MATTER_REGULATORY_INDOOR;
 	s_info.location_capability = MATTER_REGULATORY_INDOOR;
@@ -1894,14 +1897,27 @@ static void notify_lock_state(struct sub_state *s)
 /**
  * Work callback that sends lock state subscription reports to all CASE sessions.
  */
+/* The LockState last written to storage; set at boot from what was read. */
+static uint8_t s_lock_state_saved;
+
 static void notify_work_fn(void)
 {
+	uint8_t lock_state;
+
 	tm_lock();
 
 	for (uint8_t i = 0u; i < MATTER_CASE_SESSIONS; i++) {
 		notify_lock_state(&s_subs[i]);
 	}
+	lock_state = s_info.lock_state;
 	tm_unlock();
+	/* Persisted here, on the work queue, rather than in the command path on
+	 * OpenThread's small stack; and outside the lock, because a flash write
+	 * can wait on a sector erase while the Thread receive path drops every
+	 * datagram that finds the lock held. */
+	if (lock_state != s_lock_state_saved && matter_dl_lock_state_store(lock_state) == 0) {
+		s_lock_state_saved = lock_state;
+	}
 }
 
 /**
@@ -3807,6 +3823,9 @@ int matter_commission_init(const struct matter_commission_config *cfg)
 	 * not survive -- the next commissioner reads what the last one set.
 	 */
 	(void)matter_dl_attr_load(&s_info);
+	s_lock_state_saved = s_info.lock_state;
+	/* Put the bolt where the stored LockState says it is. */
+	matter_commission_lock_state(s_info.lock_state);
 	matter_ble_set_link_handler(on_link_reset);
 	matter_ble_set_tx_handler(matter_commission_ble_tx_complete);
 	matter_ble_set_msg_handler(on_message);

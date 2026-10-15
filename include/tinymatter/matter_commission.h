@@ -96,7 +96,9 @@ void matter_commission_readvertise(void);
 
 /**
  * The Door Lock cluster's LockState changed (MATTER_DL_LOCK_STATE_*). Move the
- * bolt, or whatever stands in for it.
+ * bolt, or whatever stands in for it. Also called once from
+ * matter_commission_init(), with the LockState stored before the last reboot
+ * (Locked if none), so the bolt starts where the controller will read it.
  */
 void matter_commission_lock_state(uint8_t lock_state);
 

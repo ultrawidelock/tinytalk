@@ -644,9 +644,20 @@ int matter_dl_attr_store(const struct matter_device_info *info, uint32_t prev_au
 	return first_err;
 }
 
+int matter_dl_lock_state_store(uint8_t lock_state)
+{
+	int rc = tm_kv_init();
+
+	if (rc != TM_KV_OK) {
+		return rc;
+	}
+	return tm_kv_set(TM_KV_KEY_MATTER_DL_LOCK_STATE, &lock_state, sizeof(lock_state));
+}
+
 int matter_dl_attr_load(struct matter_device_info *info)
 {
 	uint32_t relock;
+	uint8_t lock_state;
 	size_t len;
 
 	if (info == NULL) {
@@ -659,6 +670,11 @@ int matter_dl_attr_load(struct matter_device_info *info)
 	    len == sizeof(relock)) {
 		info->auto_relock_time_s = relock;
 	}
+	len = sizeof(lock_state);
+	if (tm_kv_get(TM_KV_KEY_MATTER_DL_LOCK_STATE, &lock_state, &len) == TM_KV_OK &&
+	    len == sizeof(lock_state)) {
+		info->lock_state = lock_state;
+	}
 	return 0;
 }
 
@@ -666,6 +682,7 @@ int matter_dl_attr_erase(void)
 {
 	static const uint16_t keys[] = {
 		TM_KV_KEY_MATTER_DL_AUTO_RELOCK,
+		TM_KV_KEY_MATTER_DL_LOCK_STATE,
 	};
 	int first_err = 0;
 	int rc = tm_kv_init();

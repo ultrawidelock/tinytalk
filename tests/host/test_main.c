@@ -43,6 +43,7 @@ int main(void)
 		{ "matter_network", test_matter_network },
 		{ "matter_case", test_matter_case },
 		{ "matter_clusters", test_matter_clusters },
+		{ "matter_commission", test_matter_commission },
 #if defined(SPAKEFAKE_PASSTHROUGH)
 		{ "spake2p_mbedtls", test_spake2p_mbedtls },
 #endif

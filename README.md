@@ -95,13 +95,13 @@ Use `-b nrf52833dk/nrf52833` for the nRF52833 DK. Logs go to SEGGER RTT.
 ## Sizes
 
 Measured 2026-10-16 from the linker's memory-region report, building
-`samples/door-lock` with nRF Connect SDK v3.3.0 and its default flash map
-(504 KB application partition):
+`samples/door-lock` with nRF Connect SDK v3.3.0. The sample takes 16 KB of
+flash for settings, which leaves a 496 KB application partition:
 
 | Board | Flash | RAM |
 |---|---|---|
-| decawave_dwm3001cdk | 345,196 B of 504 KB (66.89%) | 101,984 B of 128 KB (77.81%) |
-| nrf52833dk/nrf52833 | 340,328 B of 504 KB (65.94%) | 101,792 B of 128 KB (77.66%) |
+| decawave_dwm3001cdk | 340,196 B of 496 KB (66.98%) | 101,792 B of 128 KB (77.66%) |
+| nrf52833dk/nrf52833 | 340,440 B of 496 KB (67.03%) | 101,792 B of 128 KB (77.66%) |
 
 ## License
 

@@ -60,6 +60,16 @@ int matter_fab_erase(void);
 int matter_dl_attr_store(const struct matter_device_info *info, uint32_t prev_auto_relock_s);
 
 /**
+ * Write LockState, so the bolt and what the controller reads come back after a
+ * reboot as they were. Like AutoRelockTime it is not part of the operational
+ * identity, and it survives fabric removal: the bolt does not move when a
+ * controller leaves.
+ *
+ * @return 0, or a negative tm_kv_result from the backend.
+ */
+int matter_dl_lock_state_store(uint8_t lock_state);
+
+/**
  * Read it back over whatever the port initialised it to.
  *
  * A field with nothing stored is LEFT ALONE rather than zeroed, because zero is
