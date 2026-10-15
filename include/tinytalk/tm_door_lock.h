@@ -13,7 +13,7 @@
 
 #include <stdint.h>
 
-#include <tinymatter/tm_app.h>
+#include <tinytalk/tm_app.h>
 
 #ifdef __cplusplus
 extern "C" {

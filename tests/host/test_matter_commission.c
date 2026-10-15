@@ -7,15 +7,15 @@
  */
 #include <string.h>
 
-#include <tinymatter/matter_clusters.h>
-#include <tinymatter/matter_commission.h>
-#include <tinymatter/matter_exchange.h>
-#include <tinymatter/matter_fab_store.h>
-#include <tinymatter/matter_msg.h>
-#include <tinymatter/matter_pase.h>
-#include <tinymatter/matter_thread.h>
-#include <tinymatter/tm_door_lock.h>
-#include <tinymatter/tm_kv.h>
+#include <tinytalk/matter_clusters.h>
+#include <tinytalk/matter_commission.h>
+#include <tinytalk/matter_exchange.h>
+#include <tinytalk/matter_fab_store.h>
+#include <tinytalk/matter_msg.h>
+#include <tinytalk/matter_pase.h>
+#include <tinytalk/matter_thread.h>
+#include <tinytalk/tm_door_lock.h>
+#include <tinytalk/tm_kv.h>
 
 #include "host_port.h"
 #include "test.h"
@@ -29,7 +29,7 @@ static const struct matter_commission_config k_cfg = {
 			"0a2e896837995232334c319994d790ee2d09fe5cb4a229503234f8479eb3d308",
 	.salt_hex = "04f7398d5b49b5b5db8a5e61c8aece1d1a230e3b9085199d854ef034fd30a89b",
 	.iterations = 20000u,
-	.product_name = "tinymatter door lock",
+	.product_name = "tinytalk door lock",
 	.hardware_version = 1u,
 	.software_version = 1u,
 	.endpoints = &tm_door_lock_endpoint,

@@ -17,8 +17,8 @@
  */
 #include <string.h>
 
-#include <tinymatter/tm_hash.h>
-#include <tinymatter/matter_spake2p.h>
+#include <tinytalk/tm_hash.h>
+#include <tinytalk/matter_spake2p.h>
 
 #include "test.h"
 

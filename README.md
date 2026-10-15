@@ -1,6 +1,6 @@
 <!-- DISCLAIMER: maintainer adds this -->
 
-# tinymatter
+# tinytalk
 
 A from-scratch Matter accessory node in portable C11. Apple Home commissions it
 over BLE, and it runs over Thread. It is small enough for an nRF52833 (512 KB
@@ -20,7 +20,7 @@ Extracted from ultrawidelock@d6e23761.
 ## Why
 
 connectedhomeip, the reference Matter SDK, does not fit a 512 KB / 128 KB part.
-tinymatter writes the node by hand instead: TLV, the message layer, MRP, BTP,
+tinytalk writes the node by hand instead: TLV, the message layer, MRP, BTP,
 PASE with SPAKE2+, CASE, the Interaction Model and a small set of clusters,
 with everything platform-specific behind narrow seams.
 
@@ -66,7 +66,7 @@ in your configuration.
 ## Layout
 
 ```
-include/tinymatter/   the node's headers; tm_platform.h, tm_kv.h, matter_ble.h,
+include/tinytalk/     the node's headers; tm_platform.h, tm_kv.h, matter_ble.h,
                       matter_thread.h and the crypto headers are what a port provides;
                       tm_app.h is what an application adds
 src/                  the node, portable C11
@@ -124,23 +124,23 @@ Add the repository as a Zephyr module, in the application's `west.yml`:
 ```yaml
 manifest:
   projects:
-    - name: tinymatter
-      url: <tinymatter-repo-url>
+    - name: tinytalk
+      url: <tinytalk-repo-url>
       revision: <commit>
-      path: modules/lib/tinymatter
+      path: modules/lib/tinytalk
 ```
 
-or with `list(APPEND ZEPHYR_EXTRA_MODULES <path-to-tinymatter>)` before
+or with `list(APPEND ZEPHYR_EXTRA_MODULES <path-to-tinytalk>)` before
 `find_package(Zephyr)`, as `samples/door-lock/CMakeLists.txt` does. Then pick
 what to build:
 
 | Option | What it adds |
 |---|---|
-| `CONFIG_TINYMATTER` | the node, the platform port and storage on settings |
-| `CONFIG_TINYMATTER_BLE` | BLE commissioning (0xFFF6, BTP); without it the application provides `matter_ble.h` |
-| `CONFIG_TINYMATTER_THREAD` | Matter over Thread (OpenThread, SRP, UDP 5540); without it the application provides `matter_thread.h` |
-| `CONFIG_TINYMATTER_DOOR_LOCK` | the Door Lock cluster module |
-| `CONFIG_TINYMATTER_SPAKE2P_OBERON` or `_MBEDTLS` | the SPAKE2+ backend |
+| `CONFIG_TINYTALK` | the node, the platform port and storage on settings |
+| `CONFIG_TINYTALK_BLE` | BLE commissioning (0xFFF6, BTP); without it the application provides `matter_ble.h` |
+| `CONFIG_TINYTALK_THREAD` | Matter over Thread (OpenThread, SRP, UDP 5540); without it the application provides `matter_thread.h` |
+| `CONFIG_TINYTALK_DOOR_LOCK` | the Door Lock cluster module |
+| `CONFIG_TINYTALK_SPAKE2P_OBERON` or `_MBEDTLS` | the SPAKE2+ backend |
 
 Pass the application's endpoint table to `matter_commission_init()`; PORTING.md
 ("Adding a cluster") covers writing a cluster.
@@ -165,19 +165,19 @@ state:
 | Build | Flash | RAM |
 |---|---|---|
 | As shipped | 309,284 B | 101,984 B |
-| tinymatter's logs off | 298,476 B | 101,984 B |
+| tinytalk's logs off | 298,476 B | 101,984 B |
 | `overlay-release.conf` (every log off, RTT off) | 287,280 B | 93,408 B |
 | `overlay-release.conf` and Thread 1.1 instead of 1.4 | 282,336 B | 93,024 B |
 | LTO off | 342,744 B | 102,048 B |
 
 Thread 1.1 was only measured, not run: the sample stays on 1.4.
 
-Logs off is `-DCONFIG_TINYMATTER_LOG_LEVEL_OFF=y
--DCONFIG_TINYMATTER_BLE_LOG_LEVEL_OFF=y
--DCONFIG_TINYMATTER_THREAD_LOG_LEVEL_OFF=y`; the node then says nothing on RTT.
+Logs off is `-DCONFIG_TINYTALK_LOG_LEVEL_OFF=y
+-DCONFIG_TINYTALK_BLE_LOG_LEVEL_OFF=y
+-DCONFIG_TINYTALK_THREAD_LOG_LEVEL_OFF=y`; the node then says nothing on RTT.
 
 Of the image without LTO (commit 30a8600), the linker map puts 65,740 B of
-flash and 28,548 B of RAM in tinymatter: the node, the Door Lock module, the
+flash and 28,548 B of RAM in tinytalk: the node, the Door Lock module, the
 PSA backend and the Zephyr port. The rest is OpenThread (75 KB), the BLE
 controller and host (71 KB), the 802.15.4 driver (25 KB), nrf_oberon (18 KB)
 and Zephyr.

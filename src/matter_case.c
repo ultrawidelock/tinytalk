@@ -3,15 +3,15 @@
 /*
  * See matter_case.h.
  */
-#include <tinymatter/matter_case.h>
+#include <tinytalk/matter_case.h>
 
 #include <string.h>
 
-#include <tinymatter/tm_hash.h>
-#include <tinymatter/matter_crypto.h>
-#include <tinymatter/matter_fabric.h>
-#include <tinymatter/matter_im.h>
-#include <tinymatter/matter_tlv.h>
+#include <tinytalk/tm_hash.h>
+#include <tinytalk/matter_crypto.h>
+#include <tinytalk/matter_fabric.h>
+#include <tinytalk/matter_im.h>
+#include <tinytalk/matter_tlv.h>
 
 /* Sigma1 field tags (CASESession.cpp:74-83). */
 #define TAG_S1_INITIATOR_RANDOM  1u

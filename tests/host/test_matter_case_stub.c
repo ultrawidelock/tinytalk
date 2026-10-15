@@ -25,8 +25,8 @@
 
 #include <string.h>
 
-#include <tinymatter/tm_hash.h>
-#include <tinymatter/matter_case.h>
+#include <tinytalk/tm_hash.h>
+#include <tinytalk/matter_case.h>
 
 uint8_t g_case_signed[1024];
 size_t g_case_signed_len;

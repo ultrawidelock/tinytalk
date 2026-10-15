@@ -17,12 +17,12 @@
  */
 #include <string.h>
 
-#include <tinymatter/matter_case.h>
-#include <tinymatter/tm_hash.h>
-#include <tinymatter/matter_clusters.h>
-#include <tinymatter/matter_fabric.h>
-#include <tinymatter/matter_im.h>
-#include <tinymatter/matter_tlv.h>
+#include <tinytalk/matter_case.h>
+#include <tinytalk/tm_hash.h>
+#include <tinytalk/matter_clusters.h>
+#include <tinytalk/matter_fabric.h>
+#include <tinytalk/matter_im.h>
+#include <tinytalk/matter_tlv.h>
 
 #include "test.h"
 #include "test_matter_thread_stub.h"

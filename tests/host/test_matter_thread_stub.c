@@ -5,7 +5,7 @@
 
 #include <string.h>
 
-#include <tinymatter/matter_thread.h>
+#include <tinytalk/matter_thread.h>
 
 uint8_t g_thread_last_dataset[512];
 size_t g_thread_last_len;

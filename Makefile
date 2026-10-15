@@ -1,4 +1,4 @@
-# tinymatter host build: unit tests, sanitizers and the seam check.
+# tinytalk host build: unit tests, sanitizers and the seam check.
 #
 # CC and NM are honoured. On a machine whose default cc or nm is not the tool
 # you want, pass both:
@@ -26,7 +26,7 @@ SAN := -g -fsanitize=address,undefined -fno-sanitize-recover=all
 INCS := -Iinclude
 # The core, and the optional cluster modules an application puts on its endpoints.
 CORE_SRCS := $(wildcard src/*.c) $(wildcard clusters/*/*.c)
-HDRS := $(wildcard include/tinymatter/*.h tests/host/*.h tests/host/*/*.h)
+HDRS := $(wildcard include/tinytalk/*.h tests/host/*.h tests/host/*/*.h)
 
 # _DEFAULT_SOURCE: glibc hides clock_gettime/CLOCK_MONOTONIC under strict
 # -std=c11 without it; Darwin headers ignore it.

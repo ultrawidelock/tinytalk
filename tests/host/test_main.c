@@ -4,8 +4,8 @@
 #include <string.h>
 #include <unistd.h>
 
-#include <tinymatter/matter_clusters.h>
-#include <tinymatter/tm_door_lock.h>
+#include <tinytalk/matter_clusters.h>
+#include <tinytalk/tm_door_lock.h>
 
 #include "test.h"
 

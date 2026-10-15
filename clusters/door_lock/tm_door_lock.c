@@ -3,13 +3,13 @@
 /*
  * See tm_door_lock.h. One Door Lock per node: the state is this file's.
  */
-#include <tinymatter/tm_door_lock.h>
+#include <tinytalk/tm_door_lock.h>
 
 #include <string.h>
 
-#include <tinymatter/matter_im.h>
-#include <tinymatter/tm_kv.h>
-#include <tinymatter/tm_platform.h>
+#include <tinytalk/matter_im.h>
+#include <tinytalk/tm_kv.h>
+#include <tinytalk/tm_platform.h>
 
 /*
  * FeatureMap leads, because it is the attribute that decides what the rest

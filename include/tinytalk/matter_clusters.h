@@ -27,11 +27,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include <tinymatter/matter_attest.h>
-#include <tinymatter/matter_fabric.h>
-#include <tinymatter/matter_im.h>
-#include <tinymatter/matter_thread.h>
-#include <tinymatter/tm_app.h>
+#include <tinytalk/matter_attest.h>
+#include <tinytalk/matter_fabric.h>
+#include <tinytalk/matter_im.h>
+#include <tinytalk/matter_thread.h>
+#include <tinytalk/tm_app.h>
 
 #ifdef __cplusplus
 extern "C" {

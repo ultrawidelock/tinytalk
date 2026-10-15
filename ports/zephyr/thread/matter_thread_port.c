@@ -9,18 +9,18 @@
  * field out of it, the Extended PAN ID, and only so it can name the network
  * back to the commissioner.
  */
-#include <tinymatter/matter_thread.h>
+#include <tinytalk/matter_thread.h>
 
 /* For MATTER_INSTANCE_NAME_LEN: the SRP instance name is sized by the thing
  * that produces it, matter_fabric_instance_name(). */
-#include <tinymatter/matter_case.h>
-#include <tinymatter/matter_clusters.h> /* MATTER_SUPPORTED_FABRICS */
-#include <tinymatter/matter_fabric.h>
+#include <tinytalk/matter_case.h>
+#include <tinytalk/matter_clusters.h> /* MATTER_SUPPORTED_FABRICS */
+#include <tinytalk/matter_fabric.h>
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
-LOG_MODULE_REGISTER(matter_thread, CONFIG_TINYMATTER_THREAD_LOG_LEVEL);
+LOG_MODULE_REGISTER(matter_thread, CONFIG_TINYTALK_THREAD_LOG_LEVEL);
 
 /* Every call below is either OpenThread's own API or one of the four
  * openthread_*() helpers that the standalone module provides, so the Zephyr
@@ -1021,8 +1021,8 @@ static int srp_register_commissionable_locked(otInstance *ot)
 		       (unsigned int)(discriminator & 0x0FFFu));
 	(void)snprintf(s_comm_txt_cm, sizeof(s_comm_txt_cm), "2");
 	(void)snprintf(s_comm_txt_vp, sizeof(s_comm_txt_vp), "%u+%u",
-		       (unsigned int)CONFIG_TINYMATTER_VENDOR_ID,
-		       (unsigned int)CONFIG_TINYMATTER_PRODUCT_ID);
+		       (unsigned int)CONFIG_TINYTALK_VENDOR_ID,
+		       (unsigned int)CONFIG_TINYTALK_PRODUCT_ID);
 	s_comm_txt[0] = (otDnsTxtEntry){ .mKey = "D",
 					.mValue = (const uint8_t *)s_comm_txt_d,
 					.mValueLength = (uint16_t)strlen(s_comm_txt_d) };

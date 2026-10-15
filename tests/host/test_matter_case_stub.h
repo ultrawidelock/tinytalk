@@ -1,6 +1,6 @@
 /** @file test_matter_case_stub.h — see test_matter_case_stub.c. */
-#ifndef TINYMATTER_TEST_MATTER_CASE_STUB_H
-#define TINYMATTER_TEST_MATTER_CASE_STUB_H
+#ifndef TINYTALK_TEST_MATTER_CASE_STUB_H
+#define TINYTALK_TEST_MATTER_CASE_STUB_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -30,4 +30,4 @@ void test_matter_case_stub_pubkey(const uint8_t priv[32], uint8_t out[65]);
 
 void test_matter_case_stub_reset(void);
 
-#endif /* TINYMATTER_TEST_MATTER_CASE_STUB_H */
+#endif /* TINYTALK_TEST_MATTER_CASE_STUB_H */

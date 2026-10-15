@@ -8,8 +8,8 @@
  * pointers: a table would cost a relocation and an indirect call per
  * attribute on a part where flash is the binding constraint.
  */
-#include <tinymatter/matter_clusters.h>
-#include <tinymatter/tm_platform.h>
+#include <tinytalk/matter_clusters.h>
+#include <tinytalk/tm_platform.h>
 
 #include <stddef.h>
 #include <string.h>
@@ -36,8 +36,8 @@
 #define TAG_CAPMIN_SUBSCRIPTIONS 1u
 
 /* Strings this node reports about itself. */
-#define MATTER_NAME_FALLBACK "tinymatter"
-#define MATTER_SERIAL_NUMBER_FALLBACK "TM-UNKNOWN"
+#define MATTER_NAME_FALLBACK "tinytalk"
+#define MATTER_SERIAL_NUMBER_FALLBACK "TT-UNKNOWN"
 
 /* Descriptor/Structs.h:43-44, DeviceTypeStruct. */
 #define TAG_DEVTYPE_TYPE     0u

@@ -12,7 +12,7 @@
 #include <stdint.h>
 #include <string.h>
 
-#include <tinymatter/matter_crypto.h>
+#include <tinytalk/matter_crypto.h>
 
 /** @brief FIPS-197 S-box. */
 static const uint8_t SBOX[256] = {

@@ -18,10 +18,10 @@
  */
 #include <string.h>
 
-#include <tinymatter/matter_crypto.h>
-#include <tinymatter/matter_pase.h>
-#include <tinymatter/matter_pase_sm.h>
-#include <tinymatter/matter_spake2p.h>
+#include <tinytalk/matter_crypto.h>
+#include <tinytalk/matter_pase.h>
+#include <tinytalk/matter_pase_sm.h>
+#include <tinytalk/matter_spake2p.h>
 
 #include "test.h"
 

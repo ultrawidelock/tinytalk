@@ -27,7 +27,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/settings/settings.h>
 
-#include <tinymatter/tm_kv.h>
+#include <tinytalk/tm_kv.h>
 
 /* "tmk/" + four hex digits + NUL. Fixed width so every key costs the same and
  * none can be truncated by a backend cap. */

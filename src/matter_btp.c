@@ -17,7 +17,7 @@
  */
 #include <string.h>
 
-#include <tinymatter/matter_btp.h>
+#include <tinytalk/matter_btp.h>
 
 /** ATT notification overhead: opcode + handle (BtpEngine.cpp:69). */
 #define ATT_OVERHEAD 3u

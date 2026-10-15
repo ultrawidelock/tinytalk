@@ -16,10 +16,10 @@
 #include "test.h"
 #include "test_matter_thread_stub.h"
 
-#include <tinymatter/matter_clusters.h>
-#include <tinymatter/matter_im.h>
-#include <tinymatter/tm_door_lock.h>
-#include <tinymatter/matter_tlv.h>
+#include <tinytalk/matter_clusters.h>
+#include <tinytalk/matter_im.h>
+#include <tinytalk/tm_door_lock.h>
+#include <tinytalk/matter_tlv.h>
 
 #include <string.h>
 
@@ -553,7 +553,7 @@ void test_matter_clusters(void)
 
 	t_group("Basic Information uses the port's per-device serial");
 	{
-		static const char serial[] = "TM-0123456789ABCDEF";
+		static const char serial[] = "TT-0123456789ABCDEF";
 		struct matter_tlv_writer w;
 		struct matter_tlv_reader r;
 		const char *value = NULL;
@@ -601,9 +601,9 @@ void test_matter_clusters(void)
 		srv.value(srv.ctx, MATTER_ENDPOINT_ROOT, MATTER_CLUSTER_BASIC_INFORMATION,
 			  MATTER_ATTR_BASIC_PRODUCT_NAME, false, &w, MATTER_TLV_ANON);
 		matter_tlv_reader_init(&r, out, w.len);
-		T_OK("an unnamed product reads tinymatter",
+		T_OK("an unnamed product reads tinytalk",
 		     matter_tlv_next(&r) == 0 && matter_tlv_get_utf8(&r, &value, &value_len) == 0 &&
-			     value_len == 10u && memcmp(value, "tinymatter", 10u) == 0);
+			     value_len == 8u && memcmp(value, "tinytalk", 8u) == 0);
 
 		info.product_name = "a lock";
 		info.software_version = 4096u;

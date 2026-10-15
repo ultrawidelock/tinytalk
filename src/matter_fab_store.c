@@ -4,9 +4,9 @@
 #include <errno.h>
 #include <string.h>
 
-#include <tinymatter/matter_fab_store.h>
-#include <tinymatter/tm_kv.h>
-#include <tinymatter/tm_log.h>
+#include <tinytalk/matter_fab_store.h>
+#include <tinytalk/tm_kv.h>
+#include <tinytalk/tm_log.h>
 
 #define FAB_MAGIC   0x32424146u /* "FAB2", little endian. */
 #define FAB_VERSION 1u

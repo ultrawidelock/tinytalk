@@ -12,13 +12,13 @@
 #include <string.h>
 #include <time.h>
 
-#include <tinymatter/matter_ble.h>
-#include <tinymatter/matter_commission.h>
-#include <tinymatter/matter_status.h>
-#include <tinymatter/matter_thread.h>
-#include <tinymatter/tm_door_lock.h>
-#include <tinymatter/tm_kv.h>
-#include <tinymatter/tm_platform.h>
+#include <tinytalk/matter_ble.h>
+#include <tinytalk/matter_commission.h>
+#include <tinytalk/matter_status.h>
+#include <tinytalk/matter_thread.h>
+#include <tinytalk/tm_door_lock.h>
+#include <tinytalk/tm_kv.h>
+#include <tinytalk/tm_platform.h>
 
 #include "host_port.h"
 

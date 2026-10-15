@@ -24,7 +24,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <tinymatter/matter_status.h>
+#include <tinytalk/matter_status.h>
 
 #ifdef __cplusplus
 extern "C" {

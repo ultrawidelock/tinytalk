@@ -3,7 +3,7 @@
 /**
  * @file matter_pase_sm.c — PASE responder state machine. See matter_pase_sm.h.
  */
-#include <tinymatter/matter_pase_sm.h>
+#include <tinytalk/matter_pase_sm.h>
 
 #include <string.h>
 

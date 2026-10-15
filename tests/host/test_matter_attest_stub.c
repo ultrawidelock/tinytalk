@@ -11,7 +11,7 @@
  */
 #include <string.h>
 
-#include <tinymatter/matter_attest.h>
+#include <tinytalk/matter_attest.h>
 
 #include "test_matter_attest_stub.h"
 

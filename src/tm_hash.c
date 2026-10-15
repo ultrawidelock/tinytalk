@@ -5,7 +5,7 @@
 /*
  * Portable SHA-256 + HMAC/HKDF/X9.63-KDF. See tm_hash.h.
  */
-#include <tinymatter/tm_hash.h>
+#include <tinytalk/tm_hash.h>
 
 #include <string.h>
 

@@ -1,6 +1,6 @@
-# Porting tinymatter
+# Porting tinytalk
 
-The whole node, `src/` and `include/tinymatter/`, is C11 with no operating
+The whole node, `src/` and `include/tinytalk/`, is C11 with no operating
 system, no radio stack and no crypto library. It needs libc's `mem*`, `str*`
 and `snprintf`, and nothing else it does not declare. Everything it declares
 and does not define, a port provides. `make seams` lists exactly those symbols

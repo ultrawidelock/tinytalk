@@ -18,7 +18,7 @@ Usage:
     scripts/spake2p_verifier.py                     # CHIP's test pairing
     scripts/spake2p_verifier.py --passcode 12345678 --salt-b64 <...>
 
-The output goes into CONFIG_TINYMATTER_SPAKE2P_VERIFIER and friends
+The output goes into CONFIG_TINYTALK_SPAKE2P_VERIFIER and friends
 (Kconfig). Print nothing anywhere it will be logged: the
 verifier is not a secret in the way the passcode is, but it identifies the
 device and there is no reason to scatter it.
@@ -141,11 +141,11 @@ def manual_code(discriminator, passcode):
 def read_config(path):
     """The five symbols the setup code needs, out of a Zephyr .config."""
     wanted = {
-        "CONFIG_TINYMATTER_DISCRIMINATOR": None,
-        "CONFIG_TINYMATTER_SETUP_PASSCODE": None,
-        "CONFIG_TINYMATTER_SPAKE2P_SALT": None,
-        "CONFIG_TINYMATTER_SPAKE2P_ITERATIONS": None,
-        "CONFIG_TINYMATTER_SPAKE2P_VERIFIER": None,
+        "CONFIG_TINYTALK_DISCRIMINATOR": None,
+        "CONFIG_TINYTALK_SETUP_PASSCODE": None,
+        "CONFIG_TINYTALK_SPAKE2P_SALT": None,
+        "CONFIG_TINYTALK_SPAKE2P_ITERATIONS": None,
+        "CONFIG_TINYTALK_SPAKE2P_VERIFIER": None,
     }
     try:
         with open(path) as f:
@@ -161,7 +161,7 @@ def read_config(path):
     missing = [k for k, v in wanted.items() if v is None]
     if missing:
         raise SystemExit(
-            "not a tinymatter BLE build -- missing %s in %s" % (", ".join(missing), path)
+            "not a tinytalk BLE build -- missing %s in %s" % (", ".join(missing), path)
         )
     return wanted
 
@@ -177,19 +177,19 @@ def from_config(path):
     typo -- so it is an error, not a warning.
     """
     cfg = read_config(path)
-    discriminator = int(cfg["CONFIG_TINYMATTER_DISCRIMINATOR"], 0)
-    passcode = int(cfg["CONFIG_TINYMATTER_SETUP_PASSCODE"], 0)
-    salt = bytes.fromhex(cfg["CONFIG_TINYMATTER_SPAKE2P_SALT"])
-    iterations = int(cfg["CONFIG_TINYMATTER_SPAKE2P_ITERATIONS"], 0)
+    discriminator = int(cfg["CONFIG_TINYTALK_DISCRIMINATOR"], 0)
+    passcode = int(cfg["CONFIG_TINYTALK_SETUP_PASSCODE"], 0)
+    salt = bytes.fromhex(cfg["CONFIG_TINYTALK_SPAKE2P_SALT"])
+    iterations = int(cfg["CONFIG_TINYTALK_SPAKE2P_ITERATIONS"], 0)
 
-    built = cfg["CONFIG_TINYMATTER_SPAKE2P_VERIFIER"].lower()
+    built = cfg["CONFIG_TINYTALK_SPAKE2P_VERIFIER"].lower()
     ours = derive(passcode, salt, iterations).hex()
     if built != ours:
         raise SystemExit(
             "  SETUP CODE UNKNOWN: the verifier in this build is not the one\n"
             "  passcode %d produces with this salt and %d iterations.\n"
-            "  One of CONFIG_TINYMATTER_SETUP_PASSCODE or\n"
-            "  CONFIG_TINYMATTER_SPAKE2P_VERIFIER was changed without the\n"
+            "  One of CONFIG_TINYTALK_SETUP_PASSCODE or\n"
+            "  CONFIG_TINYTALK_SPAKE2P_VERIFIER was changed without the\n"
             "  other. Regenerate with: scripts/spake2p_verifier.py --passcode <p>"
             % (passcode, iterations)
         )
@@ -230,10 +230,10 @@ def main():
     print(f"salt        {salt.hex()}  ({len(salt)} bytes)")
     print(f"iterations  {args.iterations}")
     print()
-    print("CONFIG_TINYMATTER_SETUP_PASSCODE=%d" % args.passcode)
-    print("CONFIG_TINYMATTER_SPAKE2P_SALT=\"%s\"" % salt.hex())
-    print("CONFIG_TINYMATTER_SPAKE2P_ITERATIONS=%d" % args.iterations)
-    print("CONFIG_TINYMATTER_SPAKE2P_VERIFIER=\"%s\"" % blob.hex())
+    print("CONFIG_TINYTALK_SETUP_PASSCODE=%d" % args.passcode)
+    print("CONFIG_TINYTALK_SPAKE2P_SALT=\"%s\"" % salt.hex())
+    print("CONFIG_TINYTALK_SPAKE2P_ITERATIONS=%d" % args.iterations)
+    print("CONFIG_TINYTALK_SPAKE2P_VERIFIER=\"%s\"" % blob.hex())
     print()
     print(f"# {len(blob)} bytes: w0 (32) then L (65, uncompressed)")
 

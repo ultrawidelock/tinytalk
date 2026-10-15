@@ -1,4 +1,4 @@
-name: tinymatter
+name: tinytalk
 build:
   cmake: .
   kconfig: Kconfig

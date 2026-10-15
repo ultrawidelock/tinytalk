@@ -9,9 +9,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include <tinymatter/matter_clusters.h>
-#include <tinymatter/tm_app.h>
-#include <tinymatter/tm_platform.h>
+#include <tinytalk/matter_clusters.h>
+#include <tinytalk/tm_app.h>
+#include <tinytalk/tm_platform.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -29,7 +29,7 @@ struct matter_commission_config {
 	/** PBKDF2 iterations the verifier was derived with. */
 	uint32_t iterations;
 	/*
-	 * Basic Information. A NULL name reads "tinymatter"; a NULL version
+	 * Basic Information. A NULL name reads "tinytalk"; a NULL version
 	 * string reads as the number it stands beside.
 	 */
 	const char *vendor_name;

@@ -3,13 +3,13 @@
 /*
  * See matter_fabric.h.
  */
-#include <tinymatter/matter_fabric.h>
+#include <tinytalk/matter_fabric.h>
 
 #include <stdio.h>
 #include <string.h>
 
-#include <tinymatter/tm_hash.h>
-#include <tinymatter/matter_tlv.h>
+#include <tinytalk/tm_hash.h>
+#include <tinytalk/matter_tlv.h>
 
 /* Certificate element tags (credentials/CHIPCert.h:68-78). */
 #define CERT_TAG_SUBJECT    6u

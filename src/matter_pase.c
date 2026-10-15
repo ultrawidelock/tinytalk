@@ -19,9 +19,9 @@
  */
 #include <string.h>
 
-#include <tinymatter/matter_pase.h>
+#include <tinytalk/matter_pase.h>
 
-#include <tinymatter/matter_tlv.h>
+#include <tinytalk/matter_tlv.h>
 
 /* Tag numbers, identical in CHIP (PASESession.cpp:60-95) and CircuitMatter. */
 #define REQ_INITIATOR_RANDOM 1u

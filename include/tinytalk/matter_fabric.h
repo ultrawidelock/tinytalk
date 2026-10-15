@@ -28,7 +28,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <tinymatter/matter_status.h>
+#include <tinytalk/matter_status.h>
 
 /** kMaxCHIPCertLength (credentials/CHIPCert.h:54). */
 #define MATTER_CERT_MAX 400u

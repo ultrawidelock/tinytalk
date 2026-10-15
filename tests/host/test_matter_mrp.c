@@ -16,7 +16,7 @@
  */
 #include <string.h>
 
-#include <tinymatter/matter_mrp.h>
+#include <tinytalk/matter_mrp.h>
 
 #include "test.h"
 

@@ -7,7 +7,7 @@
  */
 #include <string.h>
 
-#include <tinymatter/tm_hash.h>
+#include <tinytalk/tm_hash.h>
 #include "test.h"
 
 void test_tm_hash(void)

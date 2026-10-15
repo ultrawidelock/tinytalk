@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: ISC */
 
 /*
- * tinymatter door-lock sample.
+ * tinytalk door-lock sample.
  *
  * Boot order, learned from the source project's commissioning glue:
  *
@@ -30,9 +30,9 @@
 
 #include <psa/crypto.h>
 
-#include <tinymatter/matter_commission.h>
-#include <tinymatter/matter_fab_store.h>
-#include <tinymatter/tm_door_lock.h>
+#include <tinytalk/matter_commission.h>
+#include <tinytalk/matter_fab_store.h>
+#include <tinytalk/tm_door_lock.h>
 
 #include "matter_ble_zephyr.h"
 
@@ -42,12 +42,12 @@ LOG_MODULE_REGISTER(door_lock, LOG_LEVEL_INF);
 #define FACTORY_RESET_MS 5000
 
 static const struct matter_commission_config s_matter_cfg = {
-	.vendor_id = CONFIG_TINYMATTER_VENDOR_ID,
-	.product_id = CONFIG_TINYMATTER_PRODUCT_ID,
-	.verifier_hex = CONFIG_TINYMATTER_SPAKE2P_VERIFIER,
-	.salt_hex = CONFIG_TINYMATTER_SPAKE2P_SALT,
-	.iterations = CONFIG_TINYMATTER_SPAKE2P_ITERATIONS,
-	.product_name = "tinymatter door lock",
+	.vendor_id = CONFIG_TINYTALK_VENDOR_ID,
+	.product_id = CONFIG_TINYTALK_PRODUCT_ID,
+	.verifier_hex = CONFIG_TINYTALK_SPAKE2P_VERIFIER,
+	.salt_hex = CONFIG_TINYTALK_SPAKE2P_SALT,
+	.iterations = CONFIG_TINYTALK_SPAKE2P_ITERATIONS,
+	.product_name = "tinytalk door lock",
 	.hardware_version = 1u,
 	.software_version = 1u,
 	.endpoints = &tm_door_lock_endpoint,
@@ -213,7 +213,7 @@ int main(void)
 	}
 
 	LOG_INF("manual pairing code %s, discriminator 0x%03x", TM_SAMPLE_MANUAL_CODE,
-		CONFIG_TINYMATTER_DISCRIMINATOR);
+		CONFIG_TINYTALK_DISCRIMINATOR);
 	matter_commission_readvertise();
 	return 0;
 }

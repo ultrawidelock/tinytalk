@@ -12,7 +12,7 @@
  */
 #include <string.h>
 
-#include <tinymatter/matter_pase_sm.h>
+#include <tinytalk/matter_pase_sm.h>
 
 #include "spakefake/spakefake.h"
 #include "test.h"

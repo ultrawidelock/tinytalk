@@ -7,8 +7,8 @@
  * attaches. On a bench that means standing next to a border router and turning
  * it off at the right moment; here it is one assignment.
  */
-#ifndef TINYMATTER_TEST_MATTER_THREAD_STUB_H
-#define TINYMATTER_TEST_MATTER_THREAD_STUB_H
+#ifndef TINYTALK_TEST_MATTER_THREAD_STUB_H
+#define TINYTALK_TEST_MATTER_THREAD_STUB_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -45,4 +45,4 @@ extern char g_thread_last_unadvertised[64];
 
 void test_matter_thread_stub_reset(void);
 
-#endif /* TINYMATTER_TEST_MATTER_THREAD_STUB_H */
+#endif /* TINYTALK_TEST_MATTER_THREAD_STUB_H */

@@ -13,8 +13,8 @@
  */
 #include <string.h>
 
-#include <tinymatter/matter_attest.h>
-#include <tinymatter/matter_tlv.h>
+#include <tinytalk/matter_attest.h>
+#include <tinytalk/matter_tlv.h>
 
 #include "test.h"
 #include "test_matter_attest_stub.h"

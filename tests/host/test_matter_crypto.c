@@ -12,7 +12,7 @@
  */
 #include <string.h>
 
-#include <tinymatter/matter_crypto.h>
+#include <tinytalk/matter_crypto.h>
 
 #include "test.h"
 

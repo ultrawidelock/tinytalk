@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: ISC */
 
 /* What tests/host/host_port.c records for a test to read back. */
-#ifndef TINYMATTER_HOST_PORT_H
-#define TINYMATTER_HOST_PORT_H
+#ifndef TINYTALK_HOST_PORT_H
+#define TINYTALK_HOST_PORT_H
 
 #include <stdint.h>
 
@@ -10,4 +10,4 @@
 extern uint8_t g_host_lock_state;
 extern int g_host_lock_state_calls;
 
-#endif /* TINYMATTER_HOST_PORT_H */
+#endif /* TINYTALK_HOST_PORT_H */

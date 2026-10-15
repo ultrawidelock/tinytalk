@@ -25,10 +25,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <tinymatter/matter_crypto.h>
-#include <tinymatter/matter_pase.h>
-#include <tinymatter/matter_spake2p.h>
-#include <tinymatter/matter_status.h>
+#include <tinytalk/matter_crypto.h>
+#include <tinytalk/matter_pase.h>
+#include <tinytalk/matter_spake2p.h>
+#include <tinytalk/matter_status.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -124,7 +124,7 @@ struct matter_pase_responder {
 	 * it also calls into oberon's elliptic curve code, and two stack sizes in
 	 * this project were guessed low and both faulted on hardware; 534 bytes of
 	 * BSS shows up in a size report, whereas 534 bytes of stack shows up as a
-	 * fault. See CONFIG_TINYMATTER_BLE_WQ_STACK.
+	 * fault. See CONFIG_TINYTALK_BLE_WQ_STACK.
 	 */
 	uint8_t tt[MATTER_SPAKE_TT_LEN];
 };

@@ -20,7 +20,7 @@
  * 58 ms, which is to say almost always. The intermediate is uint64_t and the
  * result saturates.
  */
-#include <tinymatter/matter_mrp.h>
+#include <tinytalk/matter_mrp.h>
 
 /**
  * Ceiling on any single delay.

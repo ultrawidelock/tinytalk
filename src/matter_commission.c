@@ -30,21 +30,21 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <tinymatter/tm_hash.h> /* tm_sha256, for the CASE transcript */
-#include <tinymatter/matter_attest.h>
-#include <tinymatter/matter_ble.h>
-#include <tinymatter/matter_case.h>
-#include <tinymatter/matter_clusters.h>
-#include <tinymatter/matter_commission.h>
-#include <tinymatter/matter_exchange.h>
-#include <tinymatter/matter_fab_store.h> /* the fabric table, across a reboot */
-#include <tinymatter/matter_im.h>
-#include <tinymatter/matter_msg.h>
-#include <tinymatter/matter_pase_sm.h>
-#include <tinymatter/matter_thread.h>
-#include <tinymatter/tm_kv.h>
-#include <tinymatter/tm_log.h>
-#include <tinymatter/tm_platform.h>
+#include <tinytalk/tm_hash.h> /* tm_sha256, for the CASE transcript */
+#include <tinytalk/matter_attest.h>
+#include <tinytalk/matter_ble.h>
+#include <tinytalk/matter_case.h>
+#include <tinytalk/matter_clusters.h>
+#include <tinytalk/matter_commission.h>
+#include <tinytalk/matter_exchange.h>
+#include <tinytalk/matter_fab_store.h> /* the fabric table, across a reboot */
+#include <tinytalk/matter_im.h>
+#include <tinytalk/matter_msg.h>
+#include <tinytalk/matter_pase_sm.h>
+#include <tinytalk/matter_thread.h>
+#include <tinytalk/tm_kv.h>
+#include <tinytalk/tm_log.h>
+#include <tinytalk/tm_platform.h>
 
 #define TM_MIN(a, b) ((a) < (b) ? (a) : (b))
 
@@ -3815,11 +3815,11 @@ int matter_commission_init(const struct matter_commission_config *cfg)
 
 		tm_device_id(id);
 		tm_sha256_init(&h);
-		tm_sha256_update(&h, (const uint8_t *)"tinymatter-serial-id", 20u);
+		tm_sha256_update(&h, (const uint8_t *)"tinytalk-serial-id", 18u);
 		tm_sha256_update(&h, (const uint8_t *)id, sizeof(id));
 		tm_sha256_final(&h, digest);
 		serial_len = snprintf(s_info.serial_number, sizeof(s_info.serial_number),
-				      "TM-%02X%02X%02X%02X%02X%02X%02X%02X",
+				      "TT-%02X%02X%02X%02X%02X%02X%02X%02X",
 				      (unsigned int)digest[0], (unsigned int)digest[1],
 				      (unsigned int)digest[2], (unsigned int)digest[3],
 				      (unsigned int)digest[4], (unsigned int)digest[5],

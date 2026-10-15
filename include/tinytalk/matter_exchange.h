@@ -26,10 +26,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <tinymatter/matter_crypto.h>
-#include <tinymatter/matter_mrp.h>
-#include <tinymatter/matter_msg.h>
-#include <tinymatter/matter_status.h>
+#include <tinytalk/matter_crypto.h>
+#include <tinytalk/matter_mrp.h>
+#include <tinytalk/matter_msg.h>
+#include <tinytalk/matter_status.h>
 
 #ifdef __cplusplus
 extern "C" {

@@ -5,8 +5,8 @@
  * @brief tm_platform.h on Zephyr: a mutex, the system work queue, the uptime
  *        clock and the hwinfo device id.
  */
-#include <tinymatter/tm_platform.h>
-#include <tinymatter/matter_commission.h>
+#include <tinytalk/tm_platform.h>
+#include <tinytalk/matter_commission.h>
 
 #include <zephyr/drivers/hwinfo.h>
 #include <zephyr/init.h>
@@ -18,7 +18,7 @@
 
 /* The node's own log (tm_log_zephyr.h); it is registered here, in the one
  * port file every build has. */
-LOG_MODULE_REGISTER(tinymatter, CONFIG_TINYMATTER_LOG_LEVEL);
+LOG_MODULE_REGISTER(tinytalk, CONFIG_TINYTALK_LOG_LEVEL);
 
 static K_MUTEX_DEFINE(s_lock);
 

@@ -16,8 +16,8 @@
 #include <stdbool.h>
 #include <string.h>
 
-#include <tinymatter/matter_case.h>
-#include <tinymatter/matter_tlv.h>
+#include <tinytalk/matter_case.h>
+#include <tinytalk/matter_tlv.h>
 
 #include "test.h"
 #include "test_matter_case_stub.h"

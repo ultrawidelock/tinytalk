@@ -1,10 +1,10 @@
 cmake_minimum_required(VERSION 3.20.0)
 
-# tinymatter is the Zephyr module two directories up.
+# tinytalk is the Zephyr module two directories up.
 list(APPEND ZEPHYR_EXTRA_MODULES ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
-project(tinymatter_door_lock)
+project(tinytalk_door_lock)
 
 target_sources(app PRIVATE src/main.c)
 
@@ -25,5 +25,5 @@ string(REGEX MATCH "setup code  ([0-9]+-[0-9]+-[0-9]+)" TM_PAIRING_MATCH "${TM_P
 if(NOT CMAKE_MATCH_1)
   message(FATAL_ERROR "no setup code in: ${TM_PAIRING_OUT}")
 endif()
-message(STATUS "tinymatter manual pairing code: ${CMAKE_MATCH_1}")
+message(STATUS "tinytalk manual pairing code: ${CMAKE_MATCH_1}")
 target_compile_definitions(app PRIVATE TM_SAMPLE_MANUAL_CODE="${CMAKE_MATCH_1}")

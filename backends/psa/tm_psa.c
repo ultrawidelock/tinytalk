@@ -14,10 +14,10 @@
 
 #include "psa/crypto.h"
 
-#include <tinymatter/matter_attest.h>
-#include <tinymatter/matter_case.h>
-#include <tinymatter/matter_crypto.h>
-#include <tinymatter/tm_platform.h>
+#include <tinytalk/matter_attest.h>
+#include <tinytalk/matter_case.h>
+#include <tinytalk/matter_crypto.h>
+#include <tinytalk/tm_platform.h>
 
 #define TM_P256_SCALAR 32u
 #define TM_P256_POINT  65u

@@ -7,8 +7,8 @@
  * Each module under test exposes one void test_<module>(void) suite; test_main.c
  * runs them all and prints an aggregate PASS/FAIL/RECORD.
  */
-#ifndef TINYMATTER_HOST_TEST_H
-#define TINYMATTER_HOST_TEST_H
+#ifndef TINYTALK_HOST_TEST_H
+#define TINYTALK_HOST_TEST_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -70,4 +70,4 @@ void test_tm_app(void);
 /* Only with the real curve; see the Makefile's SPAKE. */
 void test_spake2p_mbedtls(void);
 
-#endif /* TINYMATTER_HOST_TEST_H */
+#endif /* TINYTALK_HOST_TEST_H */

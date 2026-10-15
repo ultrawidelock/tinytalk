@@ -18,9 +18,9 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <tinymatter/matter_clusters.h>
-#include <tinymatter/matter_im.h>
-#include <tinymatter/tm_door_lock.h>
+#include <tinytalk/matter_clusters.h>
+#include <tinytalk/matter_im.h>
+#include <tinytalk/tm_door_lock.h>
 
 #include "test.h"
 

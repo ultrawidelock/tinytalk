@@ -8,11 +8,11 @@
  */
 #include <string.h>
 
-#include <tinymatter/matter_clusters.h>
-#include <tinymatter/matter_im.h>
-#include <tinymatter/matter_tlv.h>
-#include <tinymatter/tm_app.h>
-#include <tinymatter/tm_door_lock.h>
+#include <tinytalk/matter_clusters.h>
+#include <tinytalk/matter_im.h>
+#include <tinytalk/matter_tlv.h>
+#include <tinytalk/tm_app.h>
+#include <tinytalk/tm_door_lock.h>
 
 #include "test.h"
 

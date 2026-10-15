@@ -3,7 +3,7 @@
 /**
  * @file matter_exchange.c — the unsecured exchange. See matter_exchange.h.
  */
-#include <tinymatter/matter_exchange.h>
+#include <tinytalk/matter_exchange.h>
 
 #include <string.h>
 

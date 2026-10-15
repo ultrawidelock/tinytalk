@@ -17,7 +17,7 @@ elseif(TARGET nrfxlib_crypto)
   zephyr_library_link_libraries(nrfxlib_crypto)
 else()
   message(FATAL_ERROR
-    "CONFIG_TINYMATTER_SPAKE2P_OBERON needs nrf_oberon: enable CONFIG_NRF_SECURITY "
+    "CONFIG_TINYTALK_SPAKE2P_OBERON needs nrf_oberon: enable CONFIG_NRF_SECURITY "
     "with the oberon PSA driver, or CONFIG_NRF_OBERON, or pick "
-    "CONFIG_TINYMATTER_SPAKE2P_MBEDTLS.")
+    "CONFIG_TINYTALK_SPAKE2P_MBEDTLS.")
 endif()

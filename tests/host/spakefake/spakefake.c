@@ -108,7 +108,7 @@ void ocrypto_spake2p_p256_reduce(uint8_t x[32], const uint8_t *xs, size_t xs_len
 
 #include "spakefake/spakefake.h"
 
-#include <tinymatter/matter_spake2p.h>
+#include <tinytalk/matter_spake2p.h>
 
 static struct {
 	uint8_t w0[32];

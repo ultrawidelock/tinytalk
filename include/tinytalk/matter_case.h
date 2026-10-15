@@ -29,9 +29,9 @@
 #include <stdint.h>
 
 /* MATTER_MAX_CATS: the Sigma3 result carries the tags out of the NOC it opened. */
-#include <tinymatter/matter_fabric.h>
+#include <tinytalk/matter_fabric.h>
 
-#include <tinymatter/matter_status.h>
+#include <tinytalk/matter_status.h>
 
 #ifdef __cplusplus
 extern "C" {

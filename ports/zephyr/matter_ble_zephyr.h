@@ -11,7 +11,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <tinymatter/matter_ble.h>
+#include <tinytalk/matter_ble.h>
 
 #ifdef __cplusplus
 extern "C" {

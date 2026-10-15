@@ -6,7 +6,7 @@
  * they are the one thing here that cannot be derived or sanity-checked at
  * runtime: a wrong tag encodes cleanly and is refused by the peer in silence.
  */
-#include <tinymatter/matter_im.h>
+#include <tinytalk/matter_im.h>
 
 #include <string.h>
 

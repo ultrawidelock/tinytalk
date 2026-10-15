@@ -49,7 +49,7 @@
 #include <mbedtls/psa_util.h>
 #include <psa/crypto.h>
 
-#include <tinymatter/matter_spake2p.h>
+#include <tinytalk/matter_spake2p.h>
 
 /* The order of the P-256 base point, big-endian (SEC 2, secp256r1 n). */
 static const uint8_t k_order[32] = {

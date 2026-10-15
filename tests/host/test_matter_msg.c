@@ -15,7 +15,7 @@
  */
 #include <string.h>
 
-#include <tinymatter/matter_msg.h>
+#include <tinytalk/matter_msg.h>
 
 #include "test.h"
 

@@ -21,7 +21,7 @@
  */
 #include <string.h>
 
-#include <tinymatter/matter_tlv.h>
+#include <tinytalk/matter_tlv.h>
 
 /* Tag controls, TLVTags.h:105-112. */
 #define TC_ANON       0x00u

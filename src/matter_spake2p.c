@@ -16,9 +16,9 @@
  */
 #include <string.h>
 
-#include <tinymatter/matter_spake2p.h>
+#include <tinytalk/matter_spake2p.h>
 
-#include <tinymatter/tm_hash.h>
+#include <tinytalk/tm_hash.h>
 
 /* CHIPCryptoPAL.h:186-197. Constants of the protocol. */
 const uint8_t matter_spake2p_M[MATTER_SPAKE_POINT_LEN] = {

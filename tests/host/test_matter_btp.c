@@ -15,7 +15,7 @@
  */
 #include <string.h>
 
-#include <tinymatter/matter_btp.h>
+#include <tinytalk/matter_btp.h>
 
 #include "test.h"
 

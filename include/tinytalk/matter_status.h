@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: ISC */
 
 /**
- * @file matter_status.h — return codes shared by every tinymatter layer.
+ * @file matter_status.h — return codes shared by every tinytalk layer.
  */
 /*
  * One code space for the whole node, so a value returned by the TLV codec and

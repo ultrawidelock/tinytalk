@@ -11,7 +11,7 @@
 #ifndef MATTER_FAB_STORE_H
 #define MATTER_FAB_STORE_H
 
-#include <tinymatter/matter_clusters.h>
+#include <tinytalk/matter_clusters.h>
 
 /**
  * Write the operational identity to the persistent key-value store.

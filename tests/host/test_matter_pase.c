@@ -13,8 +13,8 @@
  */
 #include <string.h>
 
-#include <tinymatter/matter_mrp.h>
-#include <tinymatter/matter_pase.h>
+#include <tinytalk/matter_mrp.h>
+#include <tinytalk/matter_pase.h>
 
 #include "test.h"
 

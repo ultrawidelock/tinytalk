@@ -14,9 +14,9 @@
  */
 #include <string.h>
 
-#include <tinymatter/matter_crypto.h>
+#include <tinytalk/matter_crypto.h>
 
-#include <tinymatter/tm_hash.h>
+#include <tinytalk/tm_hash.h>
 
 /** L, the octet count of the length field: 15 - 13 = 2 for a Matter nonce. */
 #define CCM_L           2u

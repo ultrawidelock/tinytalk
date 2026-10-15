@@ -10,9 +10,9 @@
  * known, which removes both -- at the cost that every helper prepends, so the
  * code reads inside-out relative to the structure it produces.
  */
-#include <tinymatter/matter_attest.h>
+#include <tinytalk/matter_attest.h>
 
-#include <tinymatter/matter_tlv.h>
+#include <tinytalk/matter_tlv.h>
 
 #include <stdbool.h>
 #include <string.h>
