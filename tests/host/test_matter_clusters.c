@@ -18,6 +18,7 @@
 
 #include <tinymatter/matter_clusters.h>
 #include <tinymatter/matter_im.h>
+#include <tinymatter/tm_door_lock.h>
 #include <tinymatter/matter_tlv.h>
 
 #include <string.h>
@@ -114,6 +115,24 @@ static uint8_t update_label(struct matter_im_server *srv, const char *label, siz
 	inv.fields_len = n;
 	*response = 0u;
 	return srv->command(srv->ctx, &inv, response);
+}
+
+/** AutoRelockTime as the lock endpoint reports it. */
+static uint64_t relock_s(struct matter_im_server *srv)
+{
+	struct matter_tlv_writer w;
+	struct matter_tlv_reader r;
+	uint8_t out[16];
+	uint64_t v = 0u;
+
+	matter_tlv_writer_init(&w, out, sizeof(out));
+	srv->value(srv->ctx, MATTER_ENDPOINT_LOCK, MATTER_CLUSTER_DOOR_LOCK,
+		   MATTER_ATTR_DL_AUTO_RELOCK_TIME, false, &w, MATTER_TLV_ANON);
+	matter_tlv_reader_init(&r, out, w.len);
+	if (matter_tlv_next(&r) != 0 || matter_tlv_get_u64(&r, &v) != 0) {
+		return 0xFFFFFFFFFFull;
+	}
+	return v;
 }
 
 static void pattern(uint8_t *dst, size_t len, uint8_t seed)
@@ -593,7 +612,7 @@ void test_matter_clusters(void)
 		T_EQ("a u32 write is accepted",
 		     srv.write(srv.ctx, &path, tlv, w.len),
 		     MATTER_IM_STATUS_SUCCESS);
-		T_EQ("the seconds are stored", info.auto_relock_time_s, 120u);
+		T_EQ("the seconds are stored", relock_s(&srv), 120u);
 
 		matter_tlv_writer_init(&w, out, sizeof(out));
 		srv.value(srv.ctx, MATTER_ENDPOINT_LOCK, MATTER_CLUSTER_DOOR_LOCK,
@@ -615,7 +634,7 @@ void test_matter_clusters(void)
 		T_EQ("a value wider than u32 is a constraint error",
 		     srv.write(srv.ctx, &path, tlv, w.len),
 		     MATTER_IM_STATUS_CONSTRAINT_ERROR);
-		T_EQ("and the stored value is untouched", info.auto_relock_time_s, 120u);
+		T_EQ("and the stored value is untouched", relock_s(&srv), 120u);
 
 		T_EQ("an empty write is an invalid command",
 		     srv.write(srv.ctx, &path, tlv, 0u), MATTER_IM_STATUS_INVALID_COMMAND);
@@ -701,13 +720,14 @@ void test_matter_clusters(void)
 		     run_command(&srv, MATTER_CLUSTER_DOOR_LOCK, MATTER_CMD_DL_UNLOCK_DOOR, NULL,
 				 0u, NULL),
 		     MATTER_IM_STATUS_SUCCESS);
-		T_EQ("and the lock reports unlocked", info.lock_state,
+		T_EQ("and the lock reports unlocked", tm_door_lock_state(),
 		     MATTER_DL_LOCK_STATE_UNLOCKED);
 		T_EQ("LockDoor accepted",
 		     run_command(&srv, MATTER_CLUSTER_DOOR_LOCK, MATTER_CMD_DL_LOCK_DOOR, NULL, 0u,
 				 NULL),
 		     MATTER_IM_STATUS_SUCCESS);
-		T_EQ("and the lock reports locked", info.lock_state, MATTER_DL_LOCK_STATE_LOCKED);
+		T_EQ("and the lock reports locked", tm_door_lock_state(),
+		     MATTER_DL_LOCK_STATE_LOCKED);
 
 		/* A cluster the lock endpoint does not have. Answering
 		 * UNSUPPORTED_ENDPOINT here would contradict every attribute read

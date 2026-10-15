@@ -15,7 +15,8 @@
  * CASE, then the Thread attach and the SRP registration, both done by the node
  * and ports/zephyr/thread.
  *
- * The Door Lock cluster drives LED0: on while unlocked. Button 0: a short
+ * The Door Lock cluster (clusters/door_lock) sits on endpoint 1 and drives
+ * LED0: on while unlocked. Button 0: a short
  * press opens a basic commissioning window for WINDOW_S seconds; a press held
  * for FACTORY_RESET_MS erases the stored fabrics and reboots.
  */
@@ -29,9 +30,9 @@
 
 #include <psa/crypto.h>
 
-#include <tinymatter/matter_clusters.h>
 #include <tinymatter/matter_commission.h>
 #include <tinymatter/matter_fab_store.h>
+#include <tinymatter/tm_door_lock.h>
 
 #include "matter_ble_zephyr.h"
 
@@ -46,6 +47,8 @@ static const struct matter_commission_config s_matter_cfg = {
 	.verifier_hex = CONFIG_TINYMATTER_SPAKE2P_VERIFIER,
 	.salt_hex = CONFIG_TINYMATTER_SPAKE2P_SALT,
 	.iterations = CONFIG_TINYMATTER_SPAKE2P_ITERATIONS,
+	.endpoints = &tm_door_lock_endpoint,
+	.n_endpoints = 1u,
 };
 
 static const struct gpio_dt_spec s_led = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
@@ -107,7 +110,7 @@ BT_CONN_CB_DEFINE(s_conn_cb) = {
 
 /* ---- the bolt ---------------------------------------------------------------- */
 
-void matter_commission_lock_state(uint8_t lock_state)
+void tm_door_lock_actuate(uint8_t lock_state)
 {
 	(void)gpio_pin_set_dt(&s_led, lock_state == MATTER_DL_LOCK_STATE_UNLOCKED);
 	LOG_INF("door %s", lock_state == MATTER_DL_LOCK_STATE_UNLOCKED ? "unlocked" : "locked");

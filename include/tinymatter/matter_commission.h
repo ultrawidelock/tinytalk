@@ -10,6 +10,7 @@
 #include <stdint.h>
 
 #include <tinymatter/matter_clusters.h>
+#include <tinymatter/tm_app.h>
 #include <tinymatter/tm_platform.h>
 
 #ifdef __cplusplus
@@ -27,6 +28,9 @@ struct matter_commission_config {
 	const char *salt_hex;
 	/** PBKDF2 iterations the verifier was derived with. */
 	uint32_t iterations;
+	/** The application's endpoints (tm_app.h), served beside endpoint 0. */
+	const struct tm_endpoint *endpoints;
+	uint8_t n_endpoints;
 };
 
 /**
@@ -39,8 +43,8 @@ struct matter_commission_config {
  * this node holds no fabric -- see matter_commission_has_fabric() and
  * matter_commission_readvertise().
  *
- * @return 0, -EINVAL without a config, or -ENOMEM if a packet pool cannot be
- *         set up. A bad verifier is reported by log and refused per attempt
+ * @return 0, -EINVAL without a config or with an endpoint table past the
+ *         build's limits, or -ENOMEM if a packet pool cannot be set up. A bad verifier is reported by log and refused per attempt
  *         rather than failing startup.
  */
 int matter_commission_init(const struct matter_commission_config *cfg);
@@ -83,8 +87,8 @@ void matter_commission_ble_tx_complete(int status);
 /*
  * ---- provided by the application -------------------------------------------
  *
- * The two things only the application knows about. Both are called with the
- * node's lock held, so they must be quick and must not call back in.
+ * The one thing only the application knows about. Called with the node's
+ * lock held, so it must be quick and must not call back in.
  */
 
 /**
@@ -93,14 +97,6 @@ void matter_commission_ble_tx_complete(int status);
  * withdraw it otherwise. Called when either of those changes.
  */
 void matter_commission_readvertise(void);
-
-/**
- * The Door Lock cluster's LockState changed (MATTER_DL_LOCK_STATE_*). Move the
- * bolt, or whatever stands in for it. Also called once from
- * matter_commission_init(), with the LockState stored before the last reboot
- * (Locked if none), so the bolt starts where the controller will read it.
- */
-void matter_commission_lock_state(uint8_t lock_state);
 
 #ifdef __cplusplus
 }

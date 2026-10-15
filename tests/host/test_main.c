@@ -4,6 +4,9 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <tinymatter/matter_clusters.h>
+#include <tinymatter/tm_door_lock.h>
+
 #include "test.h"
 
 struct suite {
@@ -44,6 +47,7 @@ int main(void)
 		{ "matter_case", test_matter_case },
 		{ "matter_clusters", test_matter_clusters },
 		{ "matter_commission", test_matter_commission },
+		{ "tm_app", test_tm_app },
 #if defined(SPAKEFAKE_PASSTHROUGH)
 		{ "spake2p_mbedtls", test_spake2p_mbedtls },
 #endif
@@ -54,6 +58,10 @@ int main(void)
 	int npass[sizeof(suites) / sizeof(suites[0])];
 	int nfail[sizeof(suites) / sizeof(suites[0])];
 	int npend[sizeof(suites) / sizeof(suites[0])];
+
+	/* The data model every suite runs against: the sample's, a Door Lock on
+	 * endpoint 1. */
+	(void)matter_clusters_set_endpoints(&tm_door_lock_endpoint, 1u);
 
 	int color = isatty(1) && getenv("NO_COLOR") == NULL;
 	const char *B = color ? "\033[1m" : "";

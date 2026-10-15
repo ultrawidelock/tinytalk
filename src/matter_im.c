@@ -979,8 +979,14 @@ static int report_encode(const struct matter_im_server *srv, const struct matter
 		(void)matter_tlv_put_u64(&w, MATTER_TLV_CTX(TAG_REPORT_SUBSCRIPTION_ID),
 					 req->subscription_id);
 	}
-	(void)matter_tlv_start_container(&w, MATTER_TLV_CTX(TAG_REPORT_ATTRIBUTE_REPORTS),
-					 MATTER_TLV_ARRAY);
+	/*
+	 * No attribute paths, no AttributeReportIBs. The list is optional, and a
+	 * subscription's keep-alive has nothing to put in it.
+	 */
+	if (req->n_paths > 0u) {
+		(void)matter_tlv_start_container(
+			&w, MATTER_TLV_CTX(TAG_REPORT_ATTRIBUTE_REPORTS), MATTER_TLV_ARRAY);
+	}
 
 	for (i = 0; i < req->n_paths; i++) {
 		const struct matter_im_path *p = &req->paths[i];
@@ -1050,7 +1056,9 @@ static int report_encode(const struct matter_im_server *srv, const struct matter
 		}
 	}
 
-	(void)matter_tlv_end_container(&w);
+	if (req->n_paths > 0u) {
+		(void)matter_tlv_end_container(&w);
+	}
 	put_event_reports(&w, srv, req, cc);
 	/*
 	 * More follows. The peer answers a chunk with a StatusResponse and waits

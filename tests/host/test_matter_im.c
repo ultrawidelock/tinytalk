@@ -20,6 +20,7 @@
 
 #include <tinymatter/matter_clusters.h>
 #include <tinymatter/matter_im.h>
+#include <tinymatter/tm_door_lock.h>
 
 #include "test.h"
 
@@ -1419,10 +1420,6 @@ void test_matter_im_invoke(void)
 		struct iresp ir2;
 		size_t len2 = 0u;
 
-		/* Never asked: zero is not a legal LockState, and a reader that
-		 * has been asked nothing is Locked rather than unlocked. */
-		info.lock_state = 0u;
-
 		memset(&inv2, 0, sizeof(inv2));
 		inv2.endpoint = MATTER_ENDPOINT_LOCK;
 		inv2.cluster = MATTER_CLUSTER_DOOR_LOCK;
@@ -1437,7 +1434,7 @@ void test_matter_im_invoke(void)
 		 * waiting for a message that never comes. */
 		T_OK("answered with a status", ir2.is_status);
 		T_EQ("UnlockDoor SUCCESS", ir2.status, (long)MATTER_IM_STATUS_SUCCESS);
-		T_EQ("state is Unlocked", (long)info.lock_state,
+		T_EQ("state is Unlocked", (long)tm_door_lock_state(),
 		     (long)MATTER_DL_LOCK_STATE_UNLOCKED);
 
 		inv2.command = MATTER_CMD_DL_LOCK_DOOR;
@@ -1446,7 +1443,7 @@ void test_matter_im_invoke(void)
 		     MATTER_OK);
 		T_OK("LockDoor decodes", walk_invoke_response(out, len2, &ir2));
 		T_EQ("LockDoor SUCCESS", ir2.status, (long)MATTER_IM_STATUS_SUCCESS);
-		T_EQ("state is Locked", (long)info.lock_state,
+		T_EQ("state is Locked", (long)tm_door_lock_state(),
 		     (long)MATTER_DL_LOCK_STATE_LOCKED);
 	}
 
@@ -2090,6 +2087,32 @@ static int count_event_reports(const uint8_t *tlv, size_t len, uint64_t *first_n
 	return n;
 }
 
+/**
+ * Field @p field of held event @p index, as the cluster encodes it; a null
+ * field reads as 0.
+ */
+static uint64_t event_field(struct matter_im_server *srv, size_t index, uint8_t field)
+{
+	struct matter_tlv_writer w;
+	struct matter_tlv_reader r;
+	uint8_t data[64];
+	uint64_t v = 0u;
+
+	matter_tlv_writer_init(&w, data, sizeof(data));
+	srv->event_data(srv->ctx, index, &w, MATTER_TLV_ANON);
+	matter_tlv_reader_init(&r, data, w.len);
+	if (matter_tlv_next(&r) != 0 || matter_tlv_enter(&r) != 0) {
+		return 0xFFFFu;
+	}
+	while (matter_tlv_next(&r) == 0) {
+		if (matter_tlv_tag(&r) == MATTER_TLV_CTX(field)) {
+			(void)matter_tlv_get_u64(&r, &v);
+			return v;
+		}
+	}
+	return 0xFFFFu;
+}
+
 void test_matter_im_events(void)
 {
 	struct matter_device_info info;
@@ -2114,11 +2137,14 @@ void test_matter_im_events(void)
 		     MATTER_IM_STATUS_SUCCESS);
 		T_EQ("and it left an event", (long)matter_clusters_event_count(&info), 1L);
 		T_EQ("numbered from one", (long)info.events[0].number, 1L);
-		T_EQ("the operation is Unlock", (long)info.events[0].operation,
+		T_EQ("the operation is Unlock",
+		     (long)event_field(&srv, 0u, MATTER_DL_LOCK_OP_FIELD_TYPE),
 		     (long)MATTER_DL_LOCK_OP_UNLOCK);
-		T_EQ("the source is Remote -- a controller asked", (long)info.events[0].source,
+		T_EQ("the source is Remote -- a controller asked",
+		     (long)event_field(&srv, 0u, MATTER_DL_LOCK_OP_FIELD_SOURCE),
 		     (long)MATTER_DL_OP_SOURCE_REMOTE);
-		T_EQ("on the fabric that asked", (long)info.events[0].fabric_index, 1L);
+		T_EQ("on the fabric that asked",
+		     (long)event_field(&srv, 0u, MATTER_DL_LOCK_OP_FIELD_FABRIC_INDEX), 1L);
 
 		T_EQ("LockDoor accepted", run_lock_command(&srv, MATTER_CMD_DL_LOCK_DOOR),
 		     MATTER_IM_STATUS_SUCCESS);
@@ -2131,18 +2157,19 @@ void test_matter_im_events(void)
 		fill_info(&info);
 		matter_clusters_init(&srv, &info);
 
-		matter_clusters_record_lock_operation(&info, MATTER_DL_LOCK_OP_UNLOCK,
-						      MATTER_DL_OP_SOURCE_UNSPECIFIED, 0u, 0u);
+		tm_door_lock_record(MATTER_DL_LOCK_OP_UNLOCK,
+				    MATTER_DL_OP_SOURCE_UNSPECIFIED, 0u, 0u);
 		T_EQ("recorded", (long)matter_clusters_event_count(&info), 1L);
-		T_EQ("no fabric", (long)info.events[0].fabric_index, 0L);
+		T_EQ("no fabric", (long)event_field(&srv, 0u, MATTER_DL_LOCK_OP_FIELD_FABRIC_INDEX),
+		     0L);
 
 		/* A node id offered without a fabric is dropped rather than
 		 * reported: it would name a controller that did not ask. */
-		matter_clusters_record_lock_operation(&info, MATTER_DL_LOCK_OP_LOCK,
-						      MATTER_DL_OP_SOURCE_UNSPECIFIED, 0u,
-						      0x1122334455667788ULL);
-		T_EQ("a node id without a fabric is not kept", (long)info.events[1].source_node,
-		     0L);
+		tm_door_lock_record(MATTER_DL_LOCK_OP_LOCK,
+				    MATTER_DL_OP_SOURCE_UNSPECIFIED, 0u,
+				    0x1122334455667788ULL);
+		T_EQ("a node id without a fabric is not kept",
+		     (long)event_field(&srv, 1u, MATTER_DL_LOCK_OP_FIELD_SOURCE_NODE), 0L);
 	}
 
 	t_group("the ring keeps the newest, not the oldest");
@@ -2153,8 +2180,8 @@ void test_matter_im_events(void)
 		matter_clusters_init(&srv, &info);
 
 		for (i = 0u; i < MATTER_EVENTS_MAX + 2u; i++) {
-			matter_clusters_record_lock_operation(&info, MATTER_DL_LOCK_OP_UNLOCK,
-							      MATTER_DL_OP_SOURCE_UNSPECIFIED, 0u, 0u);
+			tm_door_lock_record(MATTER_DL_LOCK_OP_UNLOCK,
+					    MATTER_DL_OP_SOURCE_UNSPECIFIED, 0u, 0u);
 		}
 		T_EQ("it never grows past its bound", (long)matter_clusters_event_count(&info),
 		     (long)MATTER_EVENTS_MAX);
@@ -2167,8 +2194,8 @@ void test_matter_im_events(void)
 	{
 		fill_info(&info);
 		matter_clusters_init(&srv, &info);
-		matter_clusters_record_lock_operation(&info, MATTER_DL_LOCK_OP_UNLOCK,
-						      MATTER_DL_OP_SOURCE_UNSPECIFIED, 0u, 0u);
+		tm_door_lock_record(MATTER_DL_LOCK_OP_UNLOCK,
+				    MATTER_DL_OP_SOURCE_UNSPECIFIED, 0u, 0u);
 
 		/* A request naming NO event path gets no EventReports array at
 		 * all -- which is what keeps every commissioning read byte-for-
@@ -2199,10 +2226,10 @@ void test_matter_im_events(void)
 	{
 		fill_info(&info);
 		matter_clusters_init(&srv, &info);
-		matter_clusters_record_lock_operation(&info, MATTER_DL_LOCK_OP_UNLOCK,
-						      MATTER_DL_OP_SOURCE_UNSPECIFIED, 0u, 0u);
-		matter_clusters_record_lock_operation(&info, MATTER_DL_LOCK_OP_LOCK,
-						      MATTER_DL_OP_SOURCE_UNSPECIFIED, 0u, 0u);
+		tm_door_lock_record(MATTER_DL_LOCK_OP_UNLOCK,
+				    MATTER_DL_OP_SOURCE_UNSPECIFIED, 0u, 0u);
+		tm_door_lock_record(MATTER_DL_LOCK_OP_LOCK,
+				    MATTER_DL_OP_SOURCE_UNSPECIFIED, 0u, 0u);
 
 		one_event_path(&req);
 		T_EQ("unfiltered encodes",
@@ -2229,8 +2256,8 @@ void test_matter_im_events(void)
 	{
 		fill_info(&info);
 		matter_clusters_init(&srv, &info);
-		matter_clusters_record_lock_operation(&info, MATTER_DL_LOCK_OP_UNLOCK,
-						      MATTER_DL_OP_SOURCE_UNSPECIFIED, 0u, 0u);
+		tm_door_lock_record(MATTER_DL_LOCK_OP_UNLOCK,
+				    MATTER_DL_OP_SOURCE_UNSPECIFIED, 0u, 0u);
 
 		one_event_path(&req);
 		req.event_paths[0].event = 0x00FFu;
@@ -2286,9 +2313,9 @@ void test_matter_im_events(void)
 		fill_info(&info);
 		matter_clusters_init(&srv, &info);
 		for (i = 0u; i < MATTER_EVENTS_MAX; i++) {
-			matter_clusters_record_lock_operation(&info, MATTER_DL_LOCK_OP_UNLOCK,
-							      MATTER_DL_OP_SOURCE_REMOTE, 1u,
-							      0x1122334455667788ULL);
+			tm_door_lock_record(MATTER_DL_LOCK_OP_UNLOCK,
+					    MATTER_DL_OP_SOURCE_REMOTE, 1u,
+					    0x1122334455667788ULL);
 		}
 		one_event_path(&req);
 		req.n_paths = 1u;

@@ -30,6 +30,11 @@ if(CONFIG_TINYMATTER)
 
   zephyr_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+  # Cluster modules an application puts on its endpoints (tm_app.h).
+  if(CONFIG_TINYMATTER_DOOR_LOCK)
+    zephyr_library_sources(${CMAKE_CURRENT_SOURCE_DIR}/clusters/door_lock/tm_door_lock.c)
+  endif()
+
   # The core's logs, on Zephyr's logger (include/tinymatter/tm_log.h).
   zephyr_library_compile_definitions(TM_LOG_HEADER="tm_log_zephyr.h")
   zephyr_library_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/ports/zephyr)

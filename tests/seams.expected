@@ -10,7 +10,6 @@ matter_ble_set_tx_handler
 matter_case_ecdh
 matter_case_sign
 matter_case_verify
-matter_commission_lock_state
 matter_commission_readvertise
 matter_thread_advertise
 matter_thread_advertise_commissionable
@@ -29,7 +28,6 @@ ocrypto_spake2p_p256_reduce
 tm_device_id
 tm_hkdf
 tm_hmac_sha256
-tm_kv_delete
 tm_kv_get
 tm_kv_init
 tm_kv_set

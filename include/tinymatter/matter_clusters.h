@@ -31,6 +31,7 @@
 #include <tinymatter/matter_fabric.h>
 #include <tinymatter/matter_im.h>
 #include <tinymatter/matter_thread.h>
+#include <tinymatter/tm_app.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -44,7 +45,6 @@ extern "C" {
 #define MATTER_CLUSTER_ACCESS_CONTROL          0x001Fu
 #define MATTER_CLUSTER_OPERATIONAL_CREDENTIALS 0x003Eu
 #define MATTER_CLUSTER_ADMIN_COMMISSIONING     0x003Cu
-#define MATTER_CLUSTER_DOOR_LOCK               0x0101u
 
 /*
  * AdministratorCommissioning. This is what Apple Home's "Turn On Pairing Mode"
@@ -92,89 +92,6 @@ extern "C" {
 #define MATTER_DEVICE_TYPE_ROOT_NODE 0x0016u
 #define MATTER_DEVICE_TYPE_ROOT_REV  3u
 
-/*
- * Door Lock, on endpoint 1 (matter-devices.xml, MA-doorlock).
- *
- * This is what makes the accessory a LOCK rather than a bare node: endpoint 0
- * is a Root Node, which carries no functionality, so a controller that adopts
- * this node and finds nothing in PartsList correctly shows an empty tile.
- */
-#define MATTER_DEVICE_TYPE_DOOR_LOCK 0x000Au
-#define MATTER_DEVICE_TYPE_LOCK_REV  3u
-
-/* Door Lock attributes (DoorLock/AttributeIds.h:24-147). */
-#define MATTER_ATTR_DL_LOCK_STATE                0x0000u
-#define MATTER_ATTR_DL_LOCK_TYPE                 0x0001u
-#define MATTER_ATTR_DL_ACTUATOR_ENABLED          0x0002u
-#define MATTER_ATTR_DL_AUTO_RELOCK_TIME          0x0023u
-#define MATTER_ATTR_DL_OPERATING_MODE            0x0025u
-#define MATTER_ATTR_DL_SUPPORTED_OPERATING_MODES 0x0026u
-
-/*
- * LockDoor and UnlockDoor (CommandIds.h:97-98), which are what the tile in a
- * controller's UI actually sends. Answering them is what turns "Matter
- * Accessory / No Response" into a lock a user can press.
- *
- * Both carry an OPTIONAL PINCode field this node ignores: it advertises no
- * PIN_CREDENTIAL feature, so a controller has nothing to send and a PIN that
- * arrived anyway would be a credential class this reader does not implement.
- * Both are Timed Invoke commands, which this node already answers.
- */
-#define MATTER_CMD_DL_LOCK_DOOR   0x0000u
-#define MATTER_CMD_DL_UNLOCK_DOOR 0x0001u
-
-/* LockState (DoorLock/Enums.h:95-99) and OperatingMode (Enums.h:278-284). */
-#define MATTER_DL_LOCK_STATE_LOCKED         1u
-#define MATTER_DL_LOCK_STATE_UNLOCKED       2u
-#define MATTER_DL_OPERATING_MODE_NORMAL     0u
-/**
- * SupportedOperatingModes is INVERTED: a bit CLEARED to 0 means the mode is
- * supported (DoorLock cluster spec, DlSupportedOperatingModes). The previous
- * 0x0001 therefore claimed "everything except Normal", the opposite of the
- * truth. 0xFFF6 is CHIP's default and what the reference builds report:
- * Normal (bit 0) and NoRemoteLockUnlock (bit 3) supported, the rest not.
- */
-#define MATTER_DL_SUPPORTED_OPERATING_MODES 0xFFF6u
-
-/*
- * The LockOperation event (door-lock-cluster.xml:723-733).
- *
- * Emitted whenever the bolt's reported state is CHANGED by something, such as
- * a controller command. It is the only event this node has, and it exists
- * because the CHIP-based lock builds serve it and this one served no events at
- * all: Apple Home's "Manage Access" pane is the working hypothesis for what
- * that absence gates.
- *
- * Priority is CRITICAL, not Info. That is what the cluster XML says
- * (priority="critical" on the event element), and it is the field a subscriber
- * uses to decide what it may drop.
- */
-#define MATTER_EVENT_DL_LOCK_OPERATION 0x0002u
-
-/** PriorityLevel (EventLoggingTypes.h:51-56). */
-#define MATTER_EVENT_PRIORITY_DEBUG    0u
-#define MATTER_EVENT_PRIORITY_INFO     1u
-#define MATTER_EVENT_PRIORITY_CRITICAL 2u
-
-/** LockOperationTypeEnum (door-lock-cluster.xml:854-861). */
-#define MATTER_DL_LOCK_OP_LOCK   0u
-#define MATTER_DL_LOCK_OP_UNLOCK 1u
-
-/*
- * OperationSourceEnum (door-lock-cluster.xml:882-895). Only the two this node
- * can honestly report: a controller command is Remote, and Unspecified is what
- * a state change with no known cause gets.
- */
-#define MATTER_DL_OP_SOURCE_UNSPECIFIED 0u
-#define MATTER_DL_OP_SOURCE_REMOTE      7u
-
-/** LockOperation event fields (door-lock-cluster.xml:725-731). */
-#define MATTER_DL_LOCK_OP_FIELD_TYPE         0u
-#define MATTER_DL_LOCK_OP_FIELD_SOURCE       1u
-#define MATTER_DL_LOCK_OP_FIELD_USER_INDEX   2u
-#define MATTER_DL_LOCK_OP_FIELD_FABRIC_INDEX 3u
-#define MATTER_DL_LOCK_OP_FIELD_SOURCE_NODE  4u
-
 /**
  * Events held for a subscriber that has not collected them yet.
  *
@@ -185,21 +102,16 @@ extern "C" {
  */
 #define MATTER_EVENTS_MAX 4u
 
-/**
- * One recorded event, as a report needs it.
- *
- * LockOperation's credential list (field 5) is deliberately absent: it is
- * optional, it would carry a credential index this node does not track per
- * operation, and a list invented to fill a field is worse than an absent
- * optional.
- */
-struct matter_lock_event {
+/** One recorded event, as a report needs it. */
+struct matter_event_rec {
 	uint64_t number;
 	uint64_t timestamp_ms;
-	uint8_t operation;    /**< MATTER_DL_LOCK_OP_*. */
-	uint8_t source;       /**< MATTER_DL_OP_SOURCE_*. */
-	uint8_t fabric_index; /**< 0 when no fabric owns it; reported as null. */
-	uint64_t source_node; /**< Meaningful only with a fabric index. */
+	uint32_t cluster;
+	uint32_t event;
+	uint16_t endpoint;
+	uint8_t priority;
+	/** What the emitting cluster's event() encodes the Data from. */
+	uint8_t blob[TM_EVENT_BLOB_MAX];
 };
 
 /** Access Control attributes (access-control-cluster.cpp, AclAttribute). */
@@ -220,28 +132,6 @@ struct matter_lock_event {
 
 /** FeatureMap, on every cluster (GlobalAttributeIds.h). */
 #define MATTER_ATTR_FEATURE_MAP 0xFFFCu
-
-/*
- * The remaining global attributes (GlobalAttributeIds.h). Served only where a
- * controller has been seen to care: the CHIP-based lock builds answer all of
- * these on every cluster, and Apple Home builds its accessory-settings UI from
- * what it can discover -- the missing globals are the working hypothesis for
- * why Home showed this lock none of the optional controls the CHIP builds get.
- * Answered on the lock endpoint's clusters; the root endpoint commissions fine
- * without them and stays as it was.
- */
-#define MATTER_ATTR_GENERATED_CMD_LIST 0xFFF8u
-#define MATTER_ATTR_ACCEPTED_CMD_LIST  0xFFF9u
-#define MATTER_ATTR_ATTRIBUTE_LIST     0xFFFBu
-#define MATTER_ATTR_CLUSTER_REVISION   0xFFFDu
-
-/**
- * Door Lock ClusterRevision: 8, the value the working Nordic reference build
- * reports (the source project's
- * integrations/nrfconnect-door-lock/patches/approach-direction-cluster.patch
- * shows it in the zap context).
- */
-#define MATTER_DL_CLUSTER_REVISION 8u
 
 /* BasicInformation attributes (BasicInformation/AttributeIds.h:19-77). */
 #define MATTER_ATTR_BASIC_DATA_MODEL_REVISION   0x0000u
@@ -469,8 +359,6 @@ struct matter_fabric_acl {
 
 /** Every Matter node's root endpoint is 0. */
 #define MATTER_ENDPOINT_ROOT 0u
-/** The Door Lock. Listed in the root endpoint's PartsList. */
-#define MATTER_ENDPOINT_LOCK 1u
 
 /**
  * Complete device information structure held by the Matter node, including vendor/product IDs,
@@ -483,36 +371,13 @@ struct matter_device_info {
 	/** Stable, per-device serial supplied by the hardware port. */
 	char serial_number[MATTER_SERIAL_NUMBER_MAX + 1u];
 	/**
-	 * What LockState reports, and what LockDoor/UnlockDoor change.
-	 *
-	 * Zero is not a legal LockState, so it means "never set" and is reported
-	 * as Locked -- a reader that has been asked nothing is not unlocked.
-	 * There is still no actuator behind this: it moves no bolt, and saying
-	 * Unlocked is a claim about this node's state rather than about a door.
-	 * It matters anyway, because a controller draws the tile from it and
-	 * refuses to send UnlockDoor to something already reporting Unlocked.
-	 */
-	uint8_t lock_state;
-	/**
-	 * AutoRelockTime, in seconds; 0 means no automatic relock.
-	 *
-	 * Implemented because its ABSENCE changes controller behaviour: Apple
-	 * Home shows an auto-lock timing control for locks that carry this
-	 * attribute and improvises without it -- observed on hardware as an
-	 * unrequested LockDoor a few seconds after every UnlockDoor. The node
-	 * itself enforces nothing here yet: the value is reported and writable
-	 * so the controller owns the policy. The application persists it after
-	 * a successful write response.
-	 */
-	uint32_t auto_relock_time_s;
-	/**
-	 * The LockOperation events waiting to be reported, oldest first.
+	 * The events waiting to be reported, oldest first.
 	 *
 	 * A ring rather than a single slot: two lock changes inside one
 	 * report interval are ordinary, and a slot would report the second twice and
 	 * the first never. @ref event_count says how many are live.
 	 */
-	struct matter_lock_event events[MATTER_EVENTS_MAX];
+	struct matter_event_rec events[MATTER_EVENTS_MAX];
 	uint8_t event_count;
 	/**
 	 * The next EventNumber to hand out; the first event is 1.
@@ -740,24 +605,30 @@ void matter_clusters_set_admin_hooks(const struct matter_admin_hooks *hooks);
 void matter_clusters_init(struct matter_im_server *srv, struct matter_device_info *info);
 
 /**
- * Record a LockOperation event, to be carried by the next report.
+ * The application's endpoints (tm_app.h), served beside the root from now on.
+ * @p eps must outlive the node.
  *
- * Call after the state has changed, not before: the event says what happened.
- * LockDoor and UnlockDoor record their own, so the caller only needs this for
- * the changes that do not arrive as commands, such as an automatic relock.
- *
- * @param operation MATTER_DL_LOCK_OP_LOCK or _UNLOCK.
- * @param source MATTER_DL_OP_SOURCE_*.
- * @param fabric_index the fabric that asked, or 0 when none did -- reported as
- *        null, together with @p source_node, because an automatic relock has
- *        no fabric and claiming one would name the wrong controller.
- * @param source_node the node that asked; ignored when @p fabric_index is 0.
+ * @return MATTER_OK, or MATTER_E_INVAL for an id of 0 or one used twice, or a
+ *         table past TM_ENDPOINTS_MAX, TM_CLUSTERS_MAX or TM_ATTRS_MAX.
  */
-void matter_clusters_record_lock_operation(struct matter_device_info *info, uint8_t operation,
-					   uint8_t source, uint8_t fabric_index,
-					   uint64_t source_node);
+int matter_clusters_set_endpoints(const struct tm_endpoint *eps, uint8_t n);
 
-/** How many events are waiting. Zero after @ref matter_clusters_init. */
+/** Endpoint @p i of the table, or NULL past its end. */
+const struct tm_endpoint *matter_clusters_endpoint_at(uint8_t i);
+
+/** Change bits: one per attribute of the table, in table order. */
+#define MATTER_CHANGE_WORDS ((TM_ATTRS_MAX + 31u) / 32u)
+
+/** Copy the attributes changed since the last call into @p out, and clear them. */
+void matter_clusters_take_changes(uint32_t out[MATTER_CHANGE_WORDS]);
+
+/**
+ * The path change bit @p bit stands for, and its cluster.
+ * @return false past the last attribute of the table.
+ */
+bool matter_clusters_change_path(size_t bit, struct matter_im_path *out,
+				 const struct tm_cluster **cluster);
+
 size_t matter_clusters_event_count(const struct matter_device_info *info);
 
 /**

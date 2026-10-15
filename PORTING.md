@@ -4,7 +4,7 @@ The whole node, `src/` and `include/tinymatter/`, is C11 with no operating
 system, no radio stack and no crypto library. It needs libc's `mem*`, `str*`
 and `snprintf`, and nothing else it does not declare. Everything it declares
 and does not define, a port provides. `make seams` lists exactly those symbols
-and fails if the list changes (`tests/seams.expected`, 48 symbols).
+and fails if the list changes (`tests/seams.expected`, 46 symbols).
 
 ## What a port provides
 
@@ -17,18 +17,24 @@ and fails if the list changes (`tests/seams.expected`, 48 symbols).
 | `matter_thread.h` | `matter_thread_{start,clear,wait_attached,attached_to,advertise,unadvertise,advertise_commissionable,unadvertise_commissionable,peer_current,send_to}` | `ports/zephyr/thread/matter_thread_port.c` | `tests/host/test_matter_thread_stub.c`, `tests/host/host_port.c` |
 | `matter_crypto.h`, `matter_attest.h`, `matter_case.h` | `crypto_aes_ecb_encrypt`, `matter_attest_ec_keygen`, `matter_attest_ecdsa_sign`, `matter_case_{ecdh,sign,verify}` | `backends/psa/tm_psa.c` | `tests/host/aes_ref.c`, `tests/host/test_matter_{attest,case}_stub.c` |
 | `matter_spake2p.h` | `ocrypto_spake2p_p256_{reduce,check_key,get_key_share,get_ZV}` | `backends/oberon/oberon.cmake` or `backends/mbedtls/` | `backends/mbedtls/` or `tests/host/spakefake` (`SPAKE=fake`) |
-| `matter_commission.h` | `matter_commission_readvertise`, `matter_commission_lock_state` | the application (`samples/door-lock/src/main.c`) | `tests/host/host_port.c` |
+| `matter_commission.h` | `matter_commission_readvertise` | the application (`samples/door-lock/src/main.c`) | `tests/host/host_port.c` |
 | `tm_log.h` | optional: build with `-DTM_LOG_HEADER="<header>"` | `ports/zephyr/tm_log_zephyr.h` | compiled out |
 
 `tm_hash.c` (SHA-256, HMAC, HKDF) is portable and lives in `src/`; `make seams`
 leaves it out on purpose, so the hash shows up as a seam a port may replace.
 
+A cluster module adds what it needs on top: `clusters/door_lock/` wants
+`tm_door_lock_actuate()` from the application, and `tm_kv_delete` from the
+port for `tm_door_lock_erase()`.
+
 ## Calling the node
 
 1. Bring up storage, crypto and the BLE transport.
-2. `matter_commission_init(&cfg)` with the vendor and product ids and the
+2. `matter_commission_init(&cfg)` with the vendor and product ids, the
    SPAKE2+ verifier, salt and iteration count from
-   `scripts/spake2p_verifier.py`. It restores any stored fabric.
+   `scripts/spake2p_verifier.py`, and the application's endpoint table
+   (`tm_app.h`). It restores any stored fabric and runs each cluster's
+   `init()`.
 3. Deliver what arrives: BLE messages through the handlers the node registers
    with `matter_ble_set_*_handler`, UDP datagrams through
    `matter_thread_on_datagram()`, and each due work item through
@@ -39,6 +45,24 @@ leaves it out on purpose, so the hash shows up as a seam a port may replace.
 
 Every node entry point takes `tm_lock()` itself. A single-threaded port makes
 the lock a no-op and runs work items from its main loop.
+
+## Adding a cluster
+
+1. Describe it in a `const struct tm_cluster`: its id, every attribute it
+   answers in report order (the globals it wants served included), its
+   accepted and generated commands, revision and FeatureMap.
+2. Fill in the callbacks it needs: `read`, `write`, `invoke` and `response`,
+   `event`, `init` for restoring state, `changed` for persisting it. They run
+   with the node's lock held, except `changed`.
+3. When its state moves, call `tm_attr_changed()` (and `tm_event_emit()` for
+   an event) with the lock held. The node reports the change to every
+   subscriber whose paths cover it, then calls `changed`.
+4. Put it on an endpoint in the table passed to `matter_commission_init()`.
+
+`clusters/door_lock/tm_door_lock.c` is a complete example, and
+`tests/host/test_tm_app.c` drives two made-up clusters through the node.
+Limits are build-time: `TM_ENDPOINTS_MAX` (4), `TM_CLUSTERS_MAX` (6 per
+endpoint), `TM_ATTRS_MAX` (64 in all) and `TM_EVENT_BLOB_MAX` (16 B).
 
 ## Adding a crypto backend
 

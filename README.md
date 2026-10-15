@@ -7,9 +7,13 @@ over BLE, and it runs over Thread. It is small enough for an nRF52833 (512 KB
 flash, 128 KB RAM). It is not a certified Matter stack.
 
 The whole node, sessions and commissioning included, is in `src/` and needs
-no OS, radio stack or crypto library. A port provides 48 functions: a lock,
+no OS, radio stack or crypto library. A port provides 46 functions: a lock,
 deferred work, a clock, storage, BLE and Thread transports, and the crypto
 (see PORTING.md). Zephyr with OpenThread is the first port, in `ports/zephyr/`.
+
+The node serves endpoint 0 itself. The application describes the rest as a
+const table of endpoints and clusters (`tm_app.h`), and a Door Lock cluster
+ships as a module (`clusters/door_lock/`).
 
 Extracted from ultrawidelock@d6e23761.
 
@@ -27,9 +31,13 @@ with everything platform-specific behind narrow seams.
   subscribe.
 - Thread as an MTD: attach with the dataset the commissioner sends, SRP
   registration, Matter over UDP.
-- The Door Lock cluster with no optional features: LockDoor, UnlockDoor,
-  LockState, AutoRelockTime and the LockOperation event. In
-  `samples/door-lock` it drives LED0.
+- Application endpoints and clusters from a const table (`tm_app.h`): the
+  node builds Descriptor and the global attributes from it, routes reads,
+  writes and commands to the cluster, and reports what the application marks
+  changed to every subscriber that covers it.
+- A Door Lock cluster module with no optional features: LockDoor, UnlockDoor,
+  LockState, AutoRelockTime and the LockOperation event, stored across
+  reboots. In `samples/door-lock` it drives LED0.
 - Three fabrics, enough for one Apple Home (it uses two) plus one spare.
 
 What it does not do: Matter certification, Wi-Fi, OTA updates, groups, door
@@ -37,9 +45,10 @@ lock users or credentials, acting as a controller.
 
 Hardware status: the protocol code was developed and run on hardware in the
 source project, with a Door Lock that also carried Aliro, users and
-credentials. This repository's featureless Door Lock, its portable node layer
-and its builds have been compiled for both boards below and tested on the
-host, not yet run on hardware.
+credentials. In this repository, commit a42fc6b was commissioned into Apple
+Home on a DWM3001CDK on 2026-10-16 and locked and unlocked from it. Later
+commits are host-tested and built for both boards below, not yet rerun on
+hardware.
 
 ## Test credentials
 
@@ -58,8 +67,10 @@ in your configuration.
 
 ```
 include/tinymatter/   the node's headers; tm_platform.h, tm_kv.h, matter_ble.h,
-                      matter_thread.h and the crypto headers are what a port provides
+                      matter_thread.h and the crypto headers are what a port provides;
+                      tm_app.h is what an application adds
 src/                  the node, portable C11
+clusters/             cluster modules for application endpoints: door_lock/
 backends/             crypto: psa/ (P-256, AES, random), oberon/ and mbedtls/ (SPAKE2+)
 ports/zephyr/         platform, BLE transport, storage, Thread
 samples/door-lock/    the nRF52833 sample
@@ -72,7 +83,7 @@ tests/host/           unit tests and the host port
 ```
 make test     # host unit tests
 make asan     # the same tests under AddressSanitizer and UndefinedBehaviorSanitizer
-make seams    # the 48 symbols the node expects a port to provide
+make seams    # the 46 symbols the node expects a port to provide
 ```
 
 On a machine where `cc` or `nm` is not the compiler you want, pass both:
@@ -106,8 +117,8 @@ flash for settings, which leaves a 496 KB application partition:
 
 | Board | Flash | RAM |
 |---|---|---|
-| decawave_dwm3001cdk | 340,300 B of 496 KB (67.00%) | 101,792 B of 128 KB (77.66%) |
-| nrf52833dk/nrf52833 | 340,544 B of 496 KB (67.05%) | 101,792 B of 128 KB (77.66%) |
+| decawave_dwm3001cdk | 342,596 B of 496 KB (67.45%) | 102,048 B of 128 KB (77.86%) |
+| nrf52833dk/nrf52833 | 342,840 B of 496 KB (67.50%) | 102,048 B of 128 KB (77.86%) |
 
 ## License
 

@@ -14,6 +14,7 @@
 #include <tinymatter/matter_msg.h>
 #include <tinymatter/matter_pase.h>
 #include <tinymatter/matter_thread.h>
+#include <tinymatter/tm_door_lock.h>
 #include <tinymatter/tm_kv.h>
 
 #include "host_port.h"
@@ -28,7 +29,15 @@ static const struct matter_commission_config k_cfg = {
 			"0a2e896837995232334c319994d790ee2d09fe5cb4a229503234f8479eb3d308",
 	.salt_hex = "04f7398d5b49b5b5db8a5e61c8aece1d1a230e3b9085199d854ef034fd30a89b",
 	.iterations = 20000u,
+	.endpoints = &tm_door_lock_endpoint,
+	.n_endpoints = 1u,
 };
+
+/* LockState as the Door Lock stores it, which is what a reboot reads back. */
+static int store_lock_state(uint8_t lock_state)
+{
+	return tm_kv_set(TM_KV_KEY_MATTER_DL_LOCK_STATE, &lock_state, sizeof(lock_state));
+}
 
 /* An iPhone's PBKDFParamRequest payload; see test_matter_pase_sm.c. */
 static const char *const K_APPLE_REQ =
@@ -109,21 +118,21 @@ void test_matter_commission(void)
 	T_OK("with no fabric, the node is commissionable", !matter_commission_has_fabric());
 
 	t_group("LockState comes back after a reboot");
-	T_EQ("Unlocked is stored", matter_dl_lock_state_store(MATTER_DL_LOCK_STATE_UNLOCKED), 0);
+	T_EQ("Unlocked is stored", store_lock_state(MATTER_DL_LOCK_STATE_UNLOCKED), 0);
 	boot();
 	T_EQ("the bolt is told Unlocked", g_host_lock_state, MATTER_DL_LOCK_STATE_UNLOCKED);
-	T_EQ("Locked is stored", matter_dl_lock_state_store(MATTER_DL_LOCK_STATE_LOCKED), 0);
+	T_EQ("Locked is stored", store_lock_state(MATTER_DL_LOCK_STATE_LOCKED), 0);
 	boot();
 	T_EQ("the bolt is told Locked", g_host_lock_state, MATTER_DL_LOCK_STATE_LOCKED);
 
 	t_group("a fabric erase leaves the bolt where it is");
-	T_EQ("Unlocked is stored", matter_dl_lock_state_store(MATTER_DL_LOCK_STATE_UNLOCKED), 0);
+	T_EQ("Unlocked is stored", store_lock_state(MATTER_DL_LOCK_STATE_UNLOCKED), 0);
 	T_EQ("the fabrics are erased", matter_fab_erase(), 0);
 	boot();
 	T_EQ("the bolt is still told Unlocked", g_host_lock_state, MATTER_DL_LOCK_STATE_UNLOCKED);
 
 	t_group("erasing the Door Lock attributes forgets it");
-	T_EQ("the attributes are erased", matter_dl_attr_erase(), 0);
+	T_EQ("the attributes are erased", tm_door_lock_erase(), 0);
 	boot();
 	T_EQ("the bolt is back at Locked", g_host_lock_state, MATTER_DL_LOCK_STATE_LOCKED);
 

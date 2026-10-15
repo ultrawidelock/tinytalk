@@ -66,6 +66,7 @@ void test_matter_network(void);
 void test_matter_case(void);
 void test_matter_clusters(void);
 void test_matter_commission(void);
+void test_tm_app(void);
 /* Only with the real curve; see the Makefile's SPAKE. */
 void test_spake2p_mbedtls(void);
 

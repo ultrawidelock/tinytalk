@@ -45,47 +45,4 @@ int matter_fab_load(struct matter_device_info *info);
  */
 int matter_fab_erase(void);
 
-/**
- * Write the Door Lock attribute a controller sets and expects to read back:
- * AutoRelockTime.
- *
- * Only what CHANGED is written, which is why the previous value is asked
- * for: a controller re-writing a value it already set should cost no flash.
- * Call after a successful attribute write.
- *
- * @return 0; `-EINVAL` for an invalid request; or the first negative
- *         tm_kv_result from the backend. A failure is not fatal --
- *         the RAM value stands for this boot.
- */
-int matter_dl_attr_store(const struct matter_device_info *info, uint32_t prev_auto_relock_s);
-
-/**
- * Write LockState, so the bolt and what the controller reads come back after a
- * reboot as they were. Like AutoRelockTime it is not part of the operational
- * identity, and it survives fabric removal: the bolt does not move when a
- * controller leaves.
- *
- * @return 0, or a negative tm_kv_result from the backend.
- */
-int matter_dl_lock_state_store(uint8_t lock_state);
-
-/**
- * Read it back over whatever the port initialised it to.
- *
- * A field with nothing stored is LEFT ALONE rather than zeroed, because zero is
- * a legal value and the caller's boot default is the better answer.
- *
- * @return 0, or `-EINVAL` when @p info is NULL. Backend failures leave the
- *         caller's defaults untouched and are deliberately not returned.
- */
-int matter_dl_attr_load(struct matter_device_info *info);
-
-/**
- * Forget it, so the next boot uses the port's defaults.
- *
- * @return 0 when the key is absent or removed, or the first negative
- *         tm_kv_result from the backend.
- */
-int matter_dl_attr_erase(void);
-
 #endif /* MATTER_FAB_STORE_H */

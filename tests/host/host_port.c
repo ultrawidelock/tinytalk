@@ -2,7 +2,7 @@
 
 /*
  * The host port: tm_platform.h, tm_kv.h, matter_ble.h, the two application
- * hooks and the Thread seams test_matter_thread_stub.c does not cover, so the
+ * hooks (the advert, and the Door Lock's bolt) and the Thread seams test_matter_thread_stub.c does not cover, so the
  * whole core, the node included, links and runs on a desktop.
  *
  * Single-threaded, so the lock is a no-op. Deferred work is recorded, not
@@ -16,6 +16,7 @@
 #include <tinymatter/matter_commission.h>
 #include <tinymatter/matter_status.h>
 #include <tinymatter/matter_thread.h>
+#include <tinymatter/tm_door_lock.h>
 #include <tinymatter/tm_kv.h>
 #include <tinymatter/tm_platform.h>
 
@@ -225,7 +226,7 @@ void matter_commission_readvertise(void)
 uint8_t g_host_lock_state;
 int g_host_lock_state_calls;
 
-void matter_commission_lock_state(uint8_t lock_state)
+void tm_door_lock_actuate(uint8_t lock_state)
 {
 	g_host_lock_state = lock_state;
 	g_host_lock_state_calls++;

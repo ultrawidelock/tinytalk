@@ -10,6 +10,7 @@
  * checks neither way, but a missing case here reads as a missing case.
  */
 #include <tinymatter/matter_clusters.h>
+#include <tinymatter/tm_platform.h>
 
 #include <stddef.h>
 #include <string.h>
@@ -68,17 +69,6 @@ static const uint32_t k_root_servers[] = {
 	MATTER_CLUSTER_NETWORK_COMMISSIONING,
 	MATTER_CLUSTER_OPERATIONAL_CREDENTIALS,
 	MATTER_CLUSTER_ADMIN_COMMISSIONING,
-};
-
-/**
- * Every cluster the lock endpoint serves.
- *
- * Descriptor again, because every endpoint has one: it is how a controller
- * learns what the endpoint IS without being told where to look.
- */
-static const uint32_t k_lock_servers[] = {
-	MATTER_CLUSTER_DESCRIPTOR,
-	MATTER_CLUSTER_DOOR_LOCK,
 };
 
 /* NetworkInfoStruct (python clusters/Objects.py, NetworkInfoStruct). */
@@ -153,9 +143,6 @@ static size_t fabric_slot_for_request(const struct matter_device_info *info, uin
 	return MATTER_SUPPORTED_FABRICS;
 }
 
-#define MATTER_AC_PRIVILEGE_OPERATE     3u
-#define MATTER_AC_PRIVILEGE_MANAGE      4u
-#define MATTER_AC_PRIVILEGE_ADMINISTER  5u
 #define MATTER_AC_AUTH_MODE_CASE        2u
 /**
  * The high half of a subject id that names a CASE Authenticated Tag.
@@ -178,8 +165,6 @@ static size_t fabric_slot_for_request(const struct matter_device_info *info, uin
 #define MATTER_AC_TARGET_ENDPOINT_TAG   1u
 #define MATTER_AC_TARGET_DEVICE_TAG     2u
 #define MATTER_TLV_NULL_TYPE            0x14u
-#define MATTER_DEVICE_TYPE_ROOT_NODE    0x0016u
-#define MATTER_DEVICE_TYPE_DOOR_LOCK    0x000Au
 
 /**
  * Does @p subject, read out of an ACL entry, name this accessor?
@@ -251,15 +236,195 @@ static bool acl_subjects_match(struct matter_tlv_reader *r, uint64_t node_id,
 	return matter_tlv_exit(r) == MATTER_OK && match;
 }
 
+/* ---- application endpoints (tm_app.h) -------------------------------------- */
+
+static const struct tm_endpoint *s_eps;
+static uint8_t s_n_eps;
+
+/*
+ * Every endpoint.
+ *
+ * This exists because Apple reads NetworkCommissioning with the endpoint
+ * WILDCARDED, so a node that cannot expand an endpoint wildcard looks like a
+ * node with no network interface anywhere -- which is where commissioning
+ * stopped before this. The Door Lock must appear here as well as in the root's
+ * PartsList: a wildcard read walks THIS list, so an endpoint missing from it is
+ * invisible no matter what PartsList claims. Root first, then the table.
+ */
+static uint16_t s_ep_ids[1u + TM_ENDPOINTS_MAX];
+
+/**
+ * Every cluster each application endpoint serves, for Descriptor's ServerList.
+ *
+ * Descriptor again, because every endpoint has one: it is how a controller
+ * learns what the endpoint IS without being told where to look. Built once
+ * from the table, so ServerList, has_cluster() and a wildcard cannot drift
+ * into disagreeing about what an endpoint carries.
+ */
+static uint32_t s_servers[TM_ENDPOINTS_MAX][1u + TM_CLUSTERS_MAX];
+
+/** One bit per application attribute, in table order: changed, not yet reported. */
+static uint32_t s_changed[MATTER_CHANGE_WORDS];
+
+/** The device the IM server was last pointed at, which tm_event_emit() records into. */
+static struct matter_device_info *s_dm;
+
+static bool id_listed(const uint32_t *ids, size_t n, uint32_t id)
+{
+	for (size_t i = 0u; i < n; i++) {
+		if (ids[i] == id) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/** The application endpoint @p endpoint and its table index, or NULL. */
+static const struct tm_endpoint *app_endpoint(uint16_t endpoint, size_t *index)
+{
+	for (size_t i = 0u; i < s_n_eps; i++) {
+		if (s_eps[i].id == endpoint) {
+			if (index != NULL) {
+				*index = i;
+			}
+			return &s_eps[i];
+		}
+	}
+	return NULL;
+}
+
+static const struct tm_cluster *app_cluster(const struct tm_endpoint *ep, uint32_t cluster)
+{
+	for (size_t i = 0u; i < ep->n_clusters; i++) {
+		if (ep->clusters[i]->id == cluster) {
+			return ep->clusters[i];
+		}
+	}
+	return NULL;
+}
+
+static void app_req(const struct matter_device_info *info, uint16_t endpoint,
+		    bool fabric_filtered, struct tm_req *req)
+{
+	req->endpoint = endpoint;
+	req->fabric_index = info->accessing_fabric_index;
+	req->fabric_filtered = fabric_filtered;
+	req->node_id = info->accessing_node_id;
+}
+
+int matter_clusters_set_endpoints(const struct tm_endpoint *eps, uint8_t n)
+{
+	size_t attrs = 0u;
+
+	if (n > TM_ENDPOINTS_MAX || (n > 0u && eps == NULL)) {
+		return MATTER_E_INVAL;
+	}
+	for (uint8_t i = 0u; i < n; i++) {
+		if (eps[i].id == MATTER_ENDPOINT_ROOT || eps[i].n_clusters > TM_CLUSTERS_MAX ||
+		    (eps[i].n_clusters > 0u && eps[i].clusters == NULL)) {
+			return MATTER_E_INVAL;
+		}
+		for (uint8_t j = 0u; j < i; j++) {
+			if (eps[j].id == eps[i].id) {
+				return MATTER_E_INVAL;
+			}
+		}
+		for (uint8_t c = 0u; c < eps[i].n_clusters; c++) {
+			const struct tm_cluster *cl = eps[i].clusters[c];
+
+			if (cl == NULL || cl->id == MATTER_CLUSTER_DESCRIPTOR ||
+			    (cl->n_attrs > 0u && cl->attrs == NULL)) {
+				return MATTER_E_INVAL;
+			}
+			for (uint8_t d = 0u; d < c; d++) {
+				if (eps[i].clusters[d]->id == cl->id) {
+					return MATTER_E_INVAL;
+				}
+			}
+			attrs += cl->n_attrs;
+		}
+	}
+	if (attrs > TM_ATTRS_MAX) {
+		return MATTER_E_INVAL;
+	}
+	s_eps = eps;
+	s_n_eps = n;
+	s_ep_ids[0] = MATTER_ENDPOINT_ROOT;
+	for (uint8_t i = 0u; i < n; i++) {
+		s_ep_ids[1u + i] = eps[i].id;
+		s_servers[i][0] = MATTER_CLUSTER_DESCRIPTOR;
+		for (uint8_t c = 0u; c < eps[i].n_clusters; c++) {
+			s_servers[i][1u + c] = eps[i].clusters[c]->id;
+		}
+	}
+	memset(s_changed, 0, sizeof(s_changed));
+	return MATTER_OK;
+}
+
+const struct tm_endpoint *matter_clusters_endpoint_at(uint8_t i)
+{
+	return i < s_n_eps ? &s_eps[i] : NULL;
+}
+
+void tm_attr_changed(uint16_t endpoint, uint32_t cluster, uint32_t attr)
+{
+	size_t bit = 0u;
+
+	for (size_t i = 0u; i < s_n_eps; i++) {
+		for (size_t c = 0u; c < s_eps[i].n_clusters; c++) {
+			const struct tm_cluster *cl = s_eps[i].clusters[c];
+
+			for (size_t a = 0u; a < cl->n_attrs; a++, bit++) {
+				if (s_eps[i].id == endpoint && cl->id == cluster &&
+				    cl->attrs[a] == attr) {
+					s_changed[bit / 32u] |= 1u << (bit % 32u);
+					(void)tm_work_schedule(TM_WORK_NOTIFY, 0u);
+					return;
+				}
+			}
+		}
+	}
+}
+
+void matter_clusters_take_changes(uint32_t out[MATTER_CHANGE_WORDS])
+{
+	memcpy(out, s_changed, sizeof(s_changed));
+	memset(s_changed, 0, sizeof(s_changed));
+}
+
+bool matter_clusters_change_path(size_t bit, struct matter_im_path *out,
+				 const struct tm_cluster **cluster)
+{
+	for (size_t i = 0u; i < s_n_eps; i++) {
+		for (size_t c = 0u; c < s_eps[i].n_clusters; c++) {
+			const struct tm_cluster *cl = s_eps[i].clusters[c];
+
+			if (bit < cl->n_attrs) {
+				memset(out, 0, sizeof(*out));
+				out->endpoint = s_eps[i].id;
+				out->cluster = cl->id;
+				out->attribute = cl->attrs[bit];
+				out->have_endpoint = true;
+				out->have_cluster = true;
+				out->have_attribute = true;
+				*cluster = cl;
+				return true;
+			}
+			bit -= cl->n_attrs;
+		}
+	}
+	return false;
+}
+
 static uint32_t endpoint_device_type(uint16_t endpoint)
 {
+	const struct tm_endpoint *ep;
+
 	if (endpoint == MATTER_ENDPOINT_ROOT) {
 		return MATTER_DEVICE_TYPE_ROOT_NODE;
 	}
-	if (endpoint == MATTER_ENDPOINT_LOCK) {
-		return MATTER_DEVICE_TYPE_DOOR_LOCK;
-	}
-	return 0u;
+	ep = app_endpoint(endpoint, NULL);
+	return ep != NULL ? ep->device_type : 0u;
 }
 
 static bool acl_target_match(struct matter_tlv_reader *r, uint16_t endpoint, uint32_t cluster)
@@ -511,14 +676,14 @@ static uint8_t fabric_next_index(const struct matter_device_info *info)
  */
 static bool has_cluster(void *ctx, uint16_t endpoint, uint32_t cluster)
 {
+	const struct tm_endpoint *ep;
+
 	(void)ctx;
 
-	if (endpoint == MATTER_ENDPOINT_LOCK) {
-		return cluster == MATTER_CLUSTER_DESCRIPTOR ||
-		       cluster == MATTER_CLUSTER_DOOR_LOCK;
-	}
 	if (endpoint != MATTER_ENDPOINT_ROOT) {
-		return false;
+		ep = app_endpoint(endpoint, NULL);
+		return ep != NULL &&
+		       (cluster == MATTER_CLUSTER_DESCRIPTOR || app_cluster(ep, cluster) != NULL);
 	}
 	return cluster == MATTER_CLUSTER_BASIC_INFORMATION ||
 	       cluster == MATTER_CLUSTER_GENERAL_COMMISSIONING ||
@@ -528,21 +693,6 @@ static bool has_cluster(void *ctx, uint16_t endpoint, uint32_t cluster)
 	       cluster == MATTER_CLUSTER_ADMIN_COMMISSIONING;
 }
 
-/*
- * Every endpoint.
- *
- * This exists because Apple reads NetworkCommissioning with the endpoint
- * WILDCARDED, so a node that cannot expand an endpoint wildcard looks like a
- * node with no network interface anywhere -- which is where commissioning
- * stopped before this. Endpoint 1 is the Door Lock, and it must appear here as
- * well as in the root's PartsList: a wildcard read walks THIS list, so an
- * endpoint missing from it is invisible no matter what PartsList claims.
- */
-static const uint16_t k_endpoints[] = {
-	MATTER_ENDPOINT_ROOT,
-	MATTER_ENDPOINT_LOCK,
-};
-
 /**
  * Return the list of endpoint IDs this device exposes.
  */
@@ -550,8 +700,8 @@ static size_t list_endpoints(void *ctx, const uint16_t **out)
 {
 	(void)ctx;
 
-	*out = k_endpoints;
-	return sizeof(k_endpoints) / sizeof(k_endpoints[0]);
+	*out = s_ep_ids;
+	return 1u + s_n_eps;
 }
 
 /**
@@ -569,7 +719,13 @@ static uint8_t attr_status(void *ctx, uint16_t endpoint, uint32_t cluster, uint3
 	 * MetadataLookup.cpp:68-88 reports the outermost thing that is missing,
 	 * so a bad endpoint must not be reported as a bad attribute.
 	 */
-	if (endpoint == MATTER_ENDPOINT_LOCK) {
+	if (endpoint != MATTER_ENDPOINT_ROOT) {
+		const struct tm_endpoint *ep = app_endpoint(endpoint, NULL);
+		const struct tm_cluster *c;
+
+		if (ep == NULL) {
+			return MATTER_IM_STATUS_UNSUPPORTED_ENDPOINT;
+		}
 		if (cluster == MATTER_CLUSTER_DESCRIPTOR) {
 			switch (attribute) {
 			case MATTER_ATTR_DESC_DEVICE_TYPE_LIST:
@@ -581,40 +737,19 @@ static uint8_t attr_status(void *ctx, uint16_t endpoint, uint32_t cluster, uint3
 				return MATTER_IM_STATUS_UNSUPPORTED_ATTRIBUTE;
 			}
 		}
-		if (cluster != MATTER_CLUSTER_DOOR_LOCK) {
+		c = app_cluster(ep, cluster);
+		if (c == NULL) {
 			return MATTER_IM_STATUS_UNSUPPORTED_CLUSTER;
 		}
-		switch (attribute) {
-		case MATTER_ATTR_DL_LOCK_STATE:
-		case MATTER_ATTR_DL_LOCK_TYPE:
-		case MATTER_ATTR_DL_ACTUATOR_ENABLED:
-		case MATTER_ATTR_DL_AUTO_RELOCK_TIME:
-		case MATTER_ATTR_DL_OPERATING_MODE:
-		case MATTER_ATTR_DL_SUPPORTED_OPERATING_MODES:
 		/*
-		 * FeatureMap is answered here for the same reason it is on
-		 * NetworkCommissioning: it is what a controller reads to decide
-		 * which optional Door Lock features this lock has.
+		 * Its attrs ARE AttributeList, the globals included: the CHIP
+		 * builds answer those on every cluster, and Apple Home's optional
+		 * lock controls (auto-lock timing, access management) appear on
+		 * those builds and not on one without them.
 		 */
-		case MATTER_ATTR_FEATURE_MAP:
-		/*
-		 * The remaining globals, on this cluster only: the CHIP builds
-		 * answer them everywhere, and Apple Home's optional lock
-		 * controls (auto-lock timing, access management) appear on
-		 * those builds and not on this one. See the note in
-		 * matter_clusters.h at MATTER_ATTR_CLUSTER_REVISION.
-		 */
-		case MATTER_ATTR_CLUSTER_REVISION:
-		case MATTER_ATTR_ATTRIBUTE_LIST:
-		case MATTER_ATTR_ACCEPTED_CMD_LIST:
-		case MATTER_ATTR_GENERATED_CMD_LIST:
-			return MATTER_IM_STATUS_SUCCESS;
-		default:
-			return MATTER_IM_STATUS_UNSUPPORTED_ATTRIBUTE;
-		}
-	}
-	if (endpoint != MATTER_ENDPOINT_ROOT) {
-		return MATTER_IM_STATUS_UNSUPPORTED_ENDPOINT;
+		return id_listed(c->attrs, c->n_attrs, attribute)
+			       ? MATTER_IM_STATUS_SUCCESS
+			       : MATTER_IM_STATUS_UNSUPPORTED_ATTRIBUTE;
 	}
 
 	switch (cluster) {
@@ -716,36 +851,6 @@ static uint8_t attr_status(void *ctx, uint16_t endpoint, uint32_t cluster, uint3
 	}
 }
 
-/*
- * FeatureMap leads, because it is the attribute that decides what the rest
- * mean. The four other globals close the list, and the list includes them
- * because it IS AttributeList: the same array expands a wildcard and answers
- * 0xFFFB, so the two cannot disagree about what this cluster carries.
- */
-static const uint32_t k_lock_attrs[] = {
-	MATTER_ATTR_FEATURE_MAP,
-	MATTER_ATTR_DL_LOCK_STATE,
-	MATTER_ATTR_DL_LOCK_TYPE,
-	MATTER_ATTR_DL_ACTUATOR_ENABLED,
-	MATTER_ATTR_DL_AUTO_RELOCK_TIME,
-	MATTER_ATTR_DL_OPERATING_MODE,
-	MATTER_ATTR_DL_SUPPORTED_OPERATING_MODES,
-	MATTER_ATTR_CLUSTER_REVISION,
-	MATTER_ATTR_ATTRIBUTE_LIST,
-	MATTER_ATTR_ACCEPTED_CMD_LIST,
-	MATTER_ATTR_GENERATED_CMD_LIST,
-};
-
-/*
- * AcceptedCommandList / GeneratedCommandList: exactly what command() below
- * dispatches and what it answers with. An id here that command() refuses
- * invites an invoke that earns UNSUPPORTED_COMMAND, so the three must agree.
- */
-static const uint32_t k_lock_accepted_cmds[] = {
-	MATTER_CMD_DL_LOCK_DOOR,
-	MATTER_CMD_DL_UNLOCK_DOOR,
-};
-
 /** An array attribute whose members are bare unsigned ids; NULL/0 is legal
  * and encodes the empty list, which is how a cluster says "no commands". */
 static void put_id_list(struct matter_tlv_writer *w, matter_tlv_tag_t tag, const uint32_t *ids,
@@ -761,36 +866,38 @@ static void put_id_list(struct matter_tlv_writer *w, matter_tlv_tag_t tag, const
 }
 
 /**
- * Endpoint 1: the Door Lock and its own Descriptor.
+ * An application endpoint: its Descriptor, which the node builds from the
+ * table, and its clusters' attributes.
  *
- * Split out rather than folded into attr_value() because the two endpoints
- * share cluster IDs -- Descriptor is on both -- and a single flat switch on
- * cluster would answer the root's Descriptor for the lock.
+ * Split out rather than folded into attr_value() because every endpoint shares
+ * cluster IDs with the root -- Descriptor is on all of them -- and a single
+ * flat switch on cluster would answer the root's Descriptor for the lock.
  */
-static void lock_attr_value(const struct matter_device_info *info, uint32_t cluster,
-			    uint32_t attribute, bool fabric_filtered,
-			    struct matter_tlv_writer *w, matter_tlv_tag_t tag)
+static void app_attr_value(const struct matter_device_info *info, uint16_t endpoint,
+			   uint32_t cluster, uint32_t attribute, bool fabric_filtered,
+			   struct matter_tlv_writer *w, matter_tlv_tag_t tag)
 {
-	size_t i;
+	size_t index = 0u;
+	const struct tm_endpoint *ep = app_endpoint(endpoint, &index);
+	const struct tm_cluster *c;
+	struct tm_req req;
 
+	if (ep == NULL) {
+		return;
+	}
 	if (cluster == MATTER_CLUSTER_DESCRIPTOR) {
 		switch (attribute) {
 		case MATTER_ATTR_DESC_DEVICE_TYPE_LIST:
 			(void)matter_tlv_start_container(w, tag, MATTER_TLV_ARRAY);
 			(void)matter_tlv_start_container(w, MATTER_TLV_ANON, MATTER_TLV_STRUCTURE);
-			(void)matter_tlv_put_u64(w, MATTER_TLV_CTX(TAG_DEVTYPE_TYPE),
-						 MATTER_DEVICE_TYPE_DOOR_LOCK);
+			(void)matter_tlv_put_u64(w, MATTER_TLV_CTX(TAG_DEVTYPE_TYPE), ep->device_type);
 			(void)matter_tlv_put_u64(w, MATTER_TLV_CTX(TAG_DEVTYPE_REVISION),
-						 MATTER_DEVICE_TYPE_LOCK_REV);
+						 ep->device_revision);
 			(void)matter_tlv_end_container(w);
 			(void)matter_tlv_end_container(w);
 			return;
 		case MATTER_ATTR_DESC_SERVER_LIST:
-			(void)matter_tlv_start_container(w, tag, MATTER_TLV_ARRAY);
-			for (i = 0u; i < sizeof(k_lock_servers) / sizeof(k_lock_servers[0]); i++) {
-				(void)matter_tlv_put_u64(w, MATTER_TLV_ANON, k_lock_servers[i]);
-			}
-			(void)matter_tlv_end_container(w);
+			put_id_list(w, tag, s_servers[index], 1u + ep->n_clusters);
 			return;
 		case MATTER_ATTR_DESC_CLIENT_LIST:
 		case MATTER_ATTR_DESC_PARTS_LIST:
@@ -804,67 +911,31 @@ static void lock_attr_value(const struct matter_device_info *info, uint32_t clus
 		}
 	}
 
-	if (cluster != MATTER_CLUSTER_DOOR_LOCK) {
+	c = app_cluster(ep, cluster);
+	if (c == NULL) {
 		return;
 	}
-
 	switch (attribute) {
 	case MATTER_ATTR_FEATURE_MAP:
-		/* No features: claiming PIN, RFID, schedules or users would commit
-		 * this node to the whole credential and schedule surface, none of
-		 * which it has. */
-		(void)matter_tlv_put_u64(w, tag, 0u);
+		(void)matter_tlv_put_u64(w, tag, c->features);
 		return;
 	case MATTER_ATTR_CLUSTER_REVISION:
-		(void)matter_tlv_put_u64(w, tag, MATTER_DL_CLUSTER_REVISION);
+		(void)matter_tlv_put_u64(w, tag, c->revision);
 		return;
 	case MATTER_ATTR_ATTRIBUTE_LIST:
-		put_id_list(w, tag, k_lock_attrs, sizeof(k_lock_attrs) / sizeof(k_lock_attrs[0]));
+		put_id_list(w, tag, c->attrs, c->n_attrs);
 		return;
 	case MATTER_ATTR_ACCEPTED_CMD_LIST:
-		put_id_list(w, tag, k_lock_accepted_cmds,
-			    sizeof(k_lock_accepted_cmds) / sizeof(k_lock_accepted_cmds[0]));
+		put_id_list(w, tag, c->accepted, c->n_accepted);
 		return;
 	case MATTER_ATTR_GENERATED_CMD_LIST:
-		put_id_list(w, tag, NULL, 0u);
-		return;
-	case MATTER_ATTR_DL_LOCK_STATE:
-		/*
-		 * Still no actuator: nothing reported here moves a bolt. What it
-		 * does report is what LockDoor/UnlockDoor last set, because a
-		 * controller that sends UnlockDoor and then reads Locked has been
-		 * told its command did nothing.
-		 */
-		(void)matter_tlv_put_u64(w, tag,
-					 info->lock_state == MATTER_DL_LOCK_STATE_UNLOCKED
-						 ? MATTER_DL_LOCK_STATE_UNLOCKED
-						 : MATTER_DL_LOCK_STATE_LOCKED);
-		return;
-	case MATTER_ATTR_DL_LOCK_TYPE:
-		/* 0x00 is DeadBolt (DoorLock/Enums.h, DlLockType). */
-		(void)matter_tlv_put_u64(w, tag, 0u);
-		return;
-	case MATTER_ATTR_DL_ACTUATOR_ENABLED:
-		/*
-		 * False. There IS no actuator on this board, and claiming one
-		 * would invite a Lock/Unlock command this endpoint cannot
-		 * honour.
-		 */
-		(void)matter_tlv_put_bool(w, tag, false);
-		return;
-	case MATTER_ATTR_DL_AUTO_RELOCK_TIME:
-		/* Whatever the controller last wrote; 0 (never set) = no
-		 * automatic relock. Reported so the controller shows its
-		 * timing UI instead of improvising a relock of its own. */
-		(void)matter_tlv_put_u64(w, tag, info->auto_relock_time_s);
-		return;
-	case MATTER_ATTR_DL_OPERATING_MODE:
-		(void)matter_tlv_put_u64(w, tag, MATTER_DL_OPERATING_MODE_NORMAL);
-		return;
-	case MATTER_ATTR_DL_SUPPORTED_OPERATING_MODES:
-		(void)matter_tlv_put_u64(w, tag, MATTER_DL_SUPPORTED_OPERATING_MODES);
+		put_id_list(w, tag, c->generated, c->n_generated);
 		return;
 	default:
+		if (c->read != NULL) {
+			app_req(info, endpoint, fabric_filtered, &req);
+			c->read(&req, attribute, w, tag);
+		}
 		return;
 	}
 }
@@ -949,12 +1020,12 @@ static void attr_value(void *ctx, uint16_t endpoint, uint32_t cluster, uint32_t 
 	const struct matter_device_info *info = (const struct matter_device_info *)ctx;
 
 	/*
-	 * The lock endpoint is answered first and returns, so everything below
-	 * it can still assume the root. attr_status() has already refused any
-	 * endpoint that is neither.
+	 * The application's endpoints are answered first and return, so
+	 * everything below can still assume the root. attr_status() has already
+	 * refused any endpoint that is neither.
 	 */
-	if (endpoint == MATTER_ENDPOINT_LOCK) {
-		lock_attr_value(info, cluster, attribute, fabric_filtered, w, tag);
+	if (endpoint != MATTER_ENDPOINT_ROOT) {
+		app_attr_value(info, endpoint, cluster, attribute, fabric_filtered, w, tag);
 		return;
 	}
 
@@ -1159,13 +1230,15 @@ static void attr_value(void *ctx, uint16_t endpoint, uint32_t cluster, uint32_t 
 			return;
 		case MATTER_ATTR_DESC_PARTS_LIST:
 			/*
-			 * The Door Lock. This is the attribute that turns an
-			 * empty tile into a lock: a controller reads the root's
-			 * PartsList to find the endpoints that carry function,
-			 * and a Root Node on its own carries none.
+			 * The application's endpoints. This is the attribute that
+			 * turns an empty tile into a lock: a controller reads the
+			 * root's PartsList to find the endpoints that carry
+			 * function, and a Root Node on its own carries none.
 			 */
 			(void)matter_tlv_start_container(w, tag, MATTER_TLV_ARRAY);
-			(void)matter_tlv_put_u64(w, MATTER_TLV_ANON, MATTER_ENDPOINT_LOCK);
+			for (i = 0u; i < s_n_eps; i++) {
+				(void)matter_tlv_put_u64(w, MATTER_TLV_ANON, s_eps[i].id);
+			}
 			(void)matter_tlv_end_container(w);
 			return;
 		default:
@@ -1353,9 +1426,6 @@ static const uint32_t k_desc_attrs[] = {
 	MATTER_ATTR_DESC_PARTS_LIST,
 };
 
-/* k_lock_attrs lives above lock_attr_value(), which serves it as
- * AttributeList; it belongs to this section all the same. */
-
 static const uint32_t k_ac_attrs[] = {
 	MATTER_ATTR_AC_ACL,
 	MATTER_ATTR_AC_SUBJECTS_PER_ENTRY,
@@ -1405,14 +1475,18 @@ static const uint32_t k_nc_attrs[] = {
  */
 static size_t list_clusters(void *ctx, uint16_t endpoint, const uint32_t **out)
 {
+	size_t index = 0u;
+
 	(void)ctx;
 
-	if (endpoint == MATTER_ENDPOINT_LOCK) {
-		*out = k_lock_servers;
-		return sizeof(k_lock_servers) / sizeof(k_lock_servers[0]);
-	}
 	if (endpoint != MATTER_ENDPOINT_ROOT) {
-		return 0u;
+		const struct tm_endpoint *ep = app_endpoint(endpoint, &index);
+
+		if (ep == NULL) {
+			return 0u;
+		}
+		*out = s_servers[index];
+		return 1u + ep->n_clusters;
 	}
 	*out = k_root_servers;
 	return sizeof(k_root_servers) / sizeof(k_root_servers[0]);
@@ -1424,20 +1498,25 @@ static size_t list_clusters(void *ctx, uint16_t endpoint, const uint32_t **out)
  */
 static size_t list_attrs(void *ctx, uint16_t endpoint, uint32_t cluster, const uint32_t **out)
 {
+	(void)ctx;
 
-	if (endpoint == MATTER_ENDPOINT_LOCK) {
+	if (endpoint != MATTER_ENDPOINT_ROOT) {
+		const struct tm_endpoint *ep = app_endpoint(endpoint, NULL);
+		const struct tm_cluster *c;
+
+		if (ep == NULL) {
+			return 0u;
+		}
 		if (cluster == MATTER_CLUSTER_DESCRIPTOR) {
 			*out = k_desc_attrs;
 			return sizeof(k_desc_attrs) / sizeof(k_desc_attrs[0]);
 		}
-		if (cluster == MATTER_CLUSTER_DOOR_LOCK) {
-			*out = k_lock_attrs;
-			return sizeof(k_lock_attrs) / sizeof(k_lock_attrs[0]);
+		c = app_cluster(ep, cluster);
+		if (c == NULL) {
+			return 0u;
 		}
-		return 0u;
-	}
-	if (endpoint != MATTER_ENDPOINT_ROOT) {
-		return 0u;
+		*out = c->attrs;
+		return c->n_attrs;
 	}
 	if (cluster == MATTER_CLUSTER_BASIC_INFORMATION) {
 		*out = k_basic_attrs;
@@ -2497,11 +2576,18 @@ static uint8_t command(void *ctx, const struct matter_im_invoke *inv, uint32_t *
 	 * real, the command is not. A controller can act on that; it cannot act
 	 * on an endpoint that claims to exist and not exist at once.
 	 */
-	if (inv->endpoint == MATTER_ENDPOINT_LOCK) {
+	if (inv->endpoint != MATTER_ENDPOINT_ROOT) {
+		const struct tm_endpoint *ep = app_endpoint(inv->endpoint, NULL);
+		const struct tm_cluster *c;
 		size_t accessing_slot =
 			fabric_slot_for_index(info, info->accessing_fabric_index);
+		struct tm_req req;
 
-		if (inv->cluster != MATTER_CLUSTER_DOOR_LOCK) {
+		if (ep == NULL) {
+			return MATTER_IM_STATUS_UNSUPPORTED_ENDPOINT;
+		}
+		c = app_cluster(ep, inv->cluster);
+		if (c == NULL) {
 			return MATTER_IM_STATUS_UNSUPPORTED_CLUSTER;
 		}
 		/* PASE, a removed fabric, and a provisional identity cannot operate
@@ -2509,48 +2595,19 @@ static uint8_t command(void *ctx, const struct matter_im_invoke *inv, uint32_t *
 		if (accessing_slot >= MATTER_SUPPORTED_FABRICS || info->accessing_node_id == 0u) {
 			return MATTER_IM_STATUS_UNSUPPORTED_ACCESS;
 		}
-		if (inv->command == MATTER_CMD_DL_LOCK_DOOR ||
-		    inv->command == MATTER_CMD_DL_UNLOCK_DOOR) {
-			if (!fabric_slot_has_privilege(info, accessing_slot,
-						 MATTER_AC_PRIVILEGE_OPERATE, MATTER_ENDPOINT_LOCK,
-						 MATTER_CLUSTER_DOOR_LOCK)) {
-				return MATTER_IM_STATUS_UNSUPPORTED_ACCESS;
-			}
-			/*
-			 * The tile's two buttons. Answered with a bare status,
-			 * which is what DoorLock defines for both -- there is no
-			 * LockDoorResponse, and inventing one leaves the
-			 * controller waiting.
-			 *
-			 * The optional PINCode field is ignored rather than
-			 * rejected: this node advertises no PIN_CREDENTIAL
-			 * feature, so a controller sends none, and refusing a
-			 * command over a field nobody sends would fail every
-			 * press.
-			 */
-			info->lock_state = (inv->command == MATTER_CMD_DL_UNLOCK_DOOR)
-						   ? MATTER_DL_LOCK_STATE_UNLOCKED
-						   : MATTER_DL_LOCK_STATE_LOCKED;
-			/*
-			 * Recorded here rather than by the caller, because this is
-			 * the only place that knows the command ran AND which
-			 * fabric asked. SourceNode is left unknown: the peer's node
-			 * id belongs to the CASE session, which this layer never
-			 * sees, and the fabric's own node id is THIS node's -- it
-			 * would name the lock as the thing that unlocked the lock.
-			 */
-			matter_clusters_record_lock_operation(
-				info,
-				(inv->command == MATTER_CMD_DL_UNLOCK_DOOR)
-					? MATTER_DL_LOCK_OP_UNLOCK
-					: MATTER_DL_LOCK_OP_LOCK,
-				MATTER_DL_OP_SOURCE_REMOTE, info->accessing_fabric_index, 0u);
-			return MATTER_IM_STATUS_SUCCESS;
+		if (c->invoke == NULL || !id_listed(c->accepted, c->n_accepted, inv->command)) {
+			return MATTER_IM_STATUS_UNSUPPORTED_COMMAND;
 		}
-		return MATTER_IM_STATUS_UNSUPPORTED_COMMAND;
-	}
-	if (inv->endpoint != MATTER_ENDPOINT_ROOT) {
-		return MATTER_IM_STATUS_UNSUPPORTED_ENDPOINT;
+		if (!fabric_slot_has_privilege(info, accessing_slot,
+					       c->invoke_privilege != 0u
+						       ? c->invoke_privilege
+						       : MATTER_AC_PRIVILEGE_OPERATE,
+					       inv->endpoint, inv->cluster)) {
+			return MATTER_IM_STATUS_UNSUPPORTED_ACCESS;
+		}
+		app_req(info, inv->endpoint, false, &req);
+		return c->invoke(&req, inv->command, inv->has_fields ? inv->fields : NULL,
+				 inv->has_fields ? inv->fields_len : 0u, response_command);
 	}
 	if (inv->cluster == MATTER_CLUSTER_ADMIN_COMMISSIONING) {
 		size_t accessing_slot =
@@ -2749,8 +2806,17 @@ static void command_fields(void *ctx, uint16_t endpoint, uint32_t cluster,
 {
 	const struct matter_device_info *info = (const struct matter_device_info *)ctx;
 
-	(void)endpoint;
+	if (endpoint != MATTER_ENDPOINT_ROOT) {
+		const struct tm_endpoint *ep = app_endpoint(endpoint, NULL);
+		const struct tm_cluster *c = ep != NULL ? app_cluster(ep, cluster) : NULL;
+		struct tm_req req;
 
+		if (c != NULL && c->response != NULL) {
+			app_req(info, endpoint, false, &req);
+			c->response(&req, response_command, w, tag);
+		}
+		return;
+	}
 	if (cluster == MATTER_CLUSTER_OPERATIONAL_CREDENTIALS) {
 		opcred_fields(info, response_command, w, tag);
 		return;
@@ -2861,45 +2927,37 @@ static uint8_t attr_write(void *ctx, const struct matter_im_path *path, const ui
 	if (info == NULL) {
 		return MATTER_IM_STATUS_UNSUPPORTED_ENDPOINT;
 	}
-	if (path->endpoint == MATTER_ENDPOINT_LOCK) {
+	if (path->endpoint != MATTER_ENDPOINT_ROOT) {
+		const struct tm_endpoint *ep = app_endpoint(path->endpoint, NULL);
+		const struct tm_cluster *c;
 		size_t accessing_slot =
 			fabric_slot_for_index(info, info->accessing_fabric_index);
+		struct tm_req req;
 
+		if (ep == NULL) {
+			return MATTER_IM_STATUS_UNSUPPORTED_ENDPOINT;
+		}
+		c = app_cluster(ep, path->cluster);
 		if (!fabric_slot_has_privilege(info, accessing_slot,
-					 MATTER_AC_PRIVILEGE_ADMINISTER, path->endpoint,
-					 path->cluster)) {
+					       (c != NULL && c->write_privilege != 0u)
+						       ? c->write_privilege
+						       : MATTER_AC_PRIVILEGE_OPERATE,
+					       path->endpoint, path->cluster)) {
 			return MATTER_IM_STATUS_UNSUPPORTED_ACCESS;
 		}
-		if (path->cluster != MATTER_CLUSTER_DOOR_LOCK) {
-			return has_cluster(ctx, path->endpoint, path->cluster)
+		if (c == NULL) {
+			return path->cluster == MATTER_CLUSTER_DESCRIPTOR
 				       ? MATTER_IM_STATUS_UNSUPPORTED_WRITE
 				       : MATTER_IM_STATUS_UNSUPPORTED_CLUSTER;
 		}
-		if (path->attribute != MATTER_ATTR_DL_AUTO_RELOCK_TIME) {
+		if (!id_listed(c->attrs, c->n_attrs, path->attribute)) {
+			return MATTER_IM_STATUS_UNSUPPORTED_ATTRIBUTE;
+		}
+		if (c->write == NULL) {
 			return MATTER_IM_STATUS_UNSUPPORTED_WRITE;
 		}
-		{
-			struct matter_tlv_reader r;
-			uint64_t v = 0u;
-
-			if (data == NULL || data_len == 0u) {
-				return MATTER_IM_STATUS_INVALID_COMMAND;
-			}
-			matter_tlv_reader_init(&r, data, data_len);
-			if (matter_tlv_next(&r) != 0 || matter_tlv_get_u64(&r, &v) != 0) {
-				return MATTER_IM_STATUS_INVALID_COMMAND;
-			}
-			/* uint32 per the cluster spec; a wider value is the
-			 * controller's error, not something to truncate. */
-			if (v > 0xFFFFFFFFu) {
-				return MATTER_IM_STATUS_CONSTRAINT_ERROR;
-			}
-			info->auto_relock_time_s = (uint32_t)v;
-			return MATTER_IM_STATUS_SUCCESS;
-		}
-	}
-	if (path->endpoint != MATTER_ENDPOINT_ROOT) {
-		return MATTER_IM_STATUS_UNSUPPORTED_ENDPOINT;
+		app_req(info, path->endpoint, false, &req);
+		return c->write(&req, path->attribute, data, data_len);
 	}
 	if (path->cluster != MATTER_CLUSTER_ACCESS_CONTROL) {
 		/* Every other cluster this node has is read-only, so the honest
@@ -2938,14 +2996,14 @@ static uint8_t attr_write(void *ctx, const struct matter_im_path *path, const ui
 
 /* ---- events ---------------------------------------------------------------- */
 
-void matter_clusters_record_lock_operation(struct matter_device_info *info, uint8_t operation,
-					   uint8_t source, uint8_t fabric_index,
-					   uint64_t source_node)
+uint64_t tm_event_emit(uint16_t endpoint, uint32_t cluster, uint32_t event, uint8_t priority,
+		       const void *blob, size_t len)
 {
-	struct matter_lock_event *ev;
+	struct matter_device_info *info = s_dm;
+	struct matter_event_rec *ev;
 
-	if (info == NULL) {
-		return;
+	if (info == NULL || len > TM_EVENT_BLOB_MAX || (blob == NULL && len != 0u)) {
+		return 0u;
 	}
 	/*
 	 * A full ring drops its OLDEST, not the new one. The newest event is the
@@ -2964,13 +3022,16 @@ void matter_clusters_record_lock_operation(struct matter_device_info *info, uint
 	 * "everything" without also meaning "one I have already seen". */
 	ev->number = ++info->next_event_number;
 	ev->timestamp_ms = info->uptime_ms_cb != NULL ? info->uptime_ms_cb() : 0u;
-	ev->operation = operation;
-	ev->source = source;
-	ev->fabric_index = fabric_index;
-	/* Zero is not a legal operational node id, so it doubles as "unknown"
-	 * and is reported as null. */
-	ev->source_node = fabric_index != 0u ? source_node : 0u;
+	ev->endpoint = endpoint;
+	ev->cluster = cluster;
+	ev->event = event;
+	ev->priority = priority;
+	if (len > 0u) {
+		memcpy(ev->blob, blob, len);
+	}
 	info->event_count++;
+	(void)tm_work_schedule(TM_WORK_NOTIFY, 0u);
+	return ev->number;
 }
 
 size_t matter_clusters_event_count(const struct matter_device_info *info)
@@ -2990,54 +3051,35 @@ static bool event_at(void *ctx, size_t index, struct matter_im_event *out)
 	if (info == NULL || out == NULL || index >= info->event_count) {
 		return false;
 	}
-	out->endpoint = MATTER_ENDPOINT_LOCK;
-	out->cluster = MATTER_CLUSTER_DOOR_LOCK;
-	out->event = MATTER_EVENT_DL_LOCK_OPERATION;
+	out->endpoint = info->events[index].endpoint;
+	out->cluster = info->events[index].cluster;
+	out->event = info->events[index].event;
 	out->number = info->events[index].number;
 	out->timestamp_ms = info->events[index].timestamp_ms;
-	out->priority = MATTER_EVENT_PRIORITY_CRITICAL;
+	out->priority = info->events[index].priority;
 	return true;
 }
 
-/**
- * The event's fields: the LockOperation fields below.
- *
- * UserIndex is always null: this node keeps no users. A null nullable says
- * "not known", which is true; a zero would name user slot 0, which is not.
- */
+/** The event's fields, encoded by the cluster that emitted it. */
 static void event_data(void *ctx, size_t index, struct matter_tlv_writer *w, matter_tlv_tag_t tag)
 {
 	const struct matter_device_info *info = (const struct matter_device_info *)ctx;
-	const struct matter_lock_event *ev;
+	const struct matter_event_rec *ev = NULL;
+	const struct tm_endpoint *ep;
+	const struct tm_cluster *c = NULL;
+	struct tm_req req;
 
-	if (info == NULL || index >= info->event_count) {
+	if (info != NULL && index < info->event_count) {
+		ev = &info->events[index];
+		ep = app_endpoint(ev->endpoint, NULL);
+		c = ep != NULL ? app_cluster(ep, ev->cluster) : NULL;
+	}
+	if (c == NULL || c->event == NULL) {
 		(void)matter_tlv_put_null(w, tag);
 		return;
 	}
-	ev = &info->events[index];
-
-	(void)matter_tlv_start_container(w, tag, MATTER_TLV_STRUCTURE);
-	(void)matter_tlv_put_u64(w, MATTER_TLV_CTX(MATTER_DL_LOCK_OP_FIELD_TYPE), ev->operation);
-	(void)matter_tlv_put_u64(w, MATTER_TLV_CTX(MATTER_DL_LOCK_OP_FIELD_SOURCE), ev->source);
-	(void)matter_tlv_put_null(w, MATTER_TLV_CTX(MATTER_DL_LOCK_OP_FIELD_USER_INDEX));
-	/*
-	 * Each nullable stands on its own. A controller command has a fabric and
-	 * an unknown node; a change no controller asked for has neither. Naming a
-	 * node that did not ask would tell a controller that IT unlocked the door.
-	 */
-	if (ev->fabric_index != 0u) {
-		(void)matter_tlv_put_u64(w, MATTER_TLV_CTX(MATTER_DL_LOCK_OP_FIELD_FABRIC_INDEX),
-					 ev->fabric_index);
-	} else {
-		(void)matter_tlv_put_null(w, MATTER_TLV_CTX(MATTER_DL_LOCK_OP_FIELD_FABRIC_INDEX));
-	}
-	if (ev->source_node != 0u) {
-		(void)matter_tlv_put_u64(w, MATTER_TLV_CTX(MATTER_DL_LOCK_OP_FIELD_SOURCE_NODE),
-					 ev->source_node);
-	} else {
-		(void)matter_tlv_put_null(w, MATTER_TLV_CTX(MATTER_DL_LOCK_OP_FIELD_SOURCE_NODE));
-	}
-	(void)matter_tlv_end_container(w);
+	app_req(info, ev->endpoint, false, &req);
+	c->event(&req, ev->event, ev->blob, w, tag);
 }
 
 /**
@@ -3063,4 +3105,5 @@ void matter_clusters_init(struct matter_im_server *srv, struct matter_device_inf
 	srv->event_at = event_at;
 	srv->event_data = event_data;
 	srv->ctx = info;
+	s_dm = info;
 }

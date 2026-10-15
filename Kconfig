@@ -32,6 +32,15 @@ config TINYMATTER_SPAKE2P_MBEDTLS
 
 endchoice
 
+config TINYMATTER_DOOR_LOCK
+	bool "Door Lock cluster module (clusters/door_lock)"
+	depends on TINYMATTER
+	help
+	  A Door Lock cluster with no optional features, for an application
+	  endpoint: LockState, LockDoor/UnlockDoor, AutoRelockTime and the
+	  LockOperation event. The application provides
+	  tm_door_lock_actuate(). See include/tinymatter/tm_door_lock.h.
+
 # ---- the Zephyr port (ports/zephyr) ------------------------------------------
 
 config TINYMATTER_BLE

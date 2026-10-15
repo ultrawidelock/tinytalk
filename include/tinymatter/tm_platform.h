@@ -37,7 +37,7 @@ int64_t tm_uptime_ms(void);
 enum tm_work {
 	TM_WORK_ADMIN_EXPIRE,  /**< The commissioning window closes. */
 	TM_WORK_FAILSAFE,      /**< The commissioning fail-safe expires. */
-	TM_WORK_NOTIFY,        /**< Report a lock-state change to subscribers. */
+	TM_WORK_NOTIFY,        /**< Report attribute changes to subscribers. */
 	TM_WORK_HEARTBEAT,     /**< A subscription's max-interval report. */
 	TM_WORK_THREAD_REAP,   /**< Give up on unacknowledged Thread messages. */
 	TM_WORK_COUNT

@@ -24,7 +24,8 @@ GCC_PARITY := $(shell $(CC) -Werror=duplicate-decl-specifier -x c -fsyntax-only 
 SAN := -g -fsanitize=address,undefined -fno-sanitize-recover=all
 
 INCS := -Iinclude
-CORE_SRCS := $(wildcard src/*.c)
+# The core, and the optional cluster modules an application puts on its endpoints.
+CORE_SRCS := $(wildcard src/*.c) $(wildcard clusters/*/*.c)
 HDRS := $(wildcard include/tinymatter/*.h tests/host/*.h tests/host/*/*.h)
 
 # _DEFAULT_SOURCE: glibc hides clock_gettime/CLOCK_MONOTONIC under strict

@@ -94,7 +94,6 @@ static void s_info_defaults(void)
 	s_info.product_id = s_cfg->product_id;
 	/* Until a stored value says otherwise. The sample's bolt powers up
 	 * locked, and 0 (NotFullyLocked) is what a jammed bolt reports. */
-	s_info.lock_state = MATTER_DL_LOCK_STATE_LOCKED;
 	s_info.breadcrumb = 0u;
 	s_info.regulatory_config = MATTER_REGULATORY_INDOOR;
 	s_info.location_capability = MATTER_REGULATORY_INDOOR;
@@ -905,8 +904,6 @@ static void send_framed(uint8_t opcode, const uint8_t *payload, size_t len)
  * anywhere, and a commissioner left waiting for an answer that went out a
  * different door.
  */
-/* Defined with the subscription table it walks; see notify_lock_state(). */
-static void notify_lock_state_changed(void);
 /* Re-arms the periodic report; defined with the table it walks. */
 static void subscription_heartbeat_arm(void);
 
@@ -1322,18 +1319,6 @@ static void on_invoke_request(const struct matter_exchange_in *in)
 		tx_abort_build(slot);
 		return;
 	}
-	/*
-	 * The tile reads LockState, not the InvokeResponse. A controller takes
-	 * the SUCCESS and then waits for the attribute to be reported on its
-	 * subscription before it moves -- so answering the command and stopping
-	 * there is a lock that opens and a UI that spins forever. Submitted
-	 * rather than sent: the response's owned packet has not completed yet,
-	 * and this runs on OpenThread's thread.
-	 */
-	if (inv.cluster == MATTER_CLUSTER_DOOR_LOCK &&
-	    (inv.command == MATTER_CMD_DL_LOCK_DOOR || inv.command == MATTER_CMD_DL_UNLOCK_DOOR)) {
-		notify_lock_state_changed();
-	}
 	if (inv.cluster == MATTER_CLUSTER_NETWORK_COMMISSIONING &&
 	    inv.command == MATTER_CMD_NC_ADD_OR_UPDATE_THREAD_NETWORK) {
 		/*
@@ -1437,7 +1422,6 @@ static void on_write_request(const struct matter_exchange_in *in)
 	struct matter_tx_slot *slot;
 	uint8_t *payload;
 	size_t payload_cap;
-	uint32_t prev_relock_s;
 	size_t resp_len = 0u;
 	int rc;
 
@@ -1455,14 +1439,6 @@ static void on_write_request(const struct matter_exchange_in *in)
 		TM_LOG_HEXDUMP_INF(wr.data, wr.data_len, "  ACL bytes:");
 	}
 
-	/*
-	 * Persisted by VALUE CHANGE rather than by write status: the encoder
-	 * only mutates s_info on a write it accepted, so a changed field is
-	 * exactly a write that ran. Re-writing an unchanged value costs no
-	 * flash, which matters because the store shares its pages with the
-	 * fabric table.
-	 */
-	prev_relock_s = s_info.auto_relock_time_s;
 	slot = tx_acquire();
 	if (slot == NULL) {
 		TM_LOG_ERR("no owned packet slot for WriteResponse");
@@ -1475,7 +1451,6 @@ static void on_write_request(const struct matter_exchange_in *in)
 		tx_abort_build(slot);
 		return;
 	}
-	(void)matter_dl_attr_store(&s_info, prev_relock_s);
 	if (resp_len == 0u) {
 		/* The write ran; the peer asked not to be told. */
 		TM_LOG_DBG("  write done, response suppressed");
@@ -1528,6 +1503,8 @@ struct sub_state {
 	bool priming;
 	bool active;
 	bool in_use;
+	/** Rebound after a reboot, its paths unknown: told of every change. */
+	bool resumed;
 	/**
 	 * Where to send a report this node originates.
 	 *
@@ -1561,10 +1538,9 @@ static uint8_t s_sub_next_victim;
  * REBOUND to that new session when it arrives, which costs no handshake, no
  * outbound MRP and nothing on the OpenThread stack.
  *
- * What is NOT stored is the read path set. A revived subscription only ever
- * carries this node's own LockState reports, which notify_lock_state() builds
- * from a fixed path; the stored paths exist to build the PRIMING report, and a
- * resumed subscription does not prime.
+ * What is NOT stored is the read path set. A revived subscription is told of
+ * every change, whatever it covered; the stored paths exist to build the
+ * PRIMING report, and a resumed subscription does not prime.
  *
  * UNPROVEN against a real controller: Apple may refuse a ReportData whose
  * subscription id it considers bound to the session that died. Its
@@ -1731,6 +1707,7 @@ static void sub_resume_for(uint8_t case_slot, uint64_t peer_node, uint8_t fabric
 	s->in_use = true;
 	s->active = true;
 	s->priming = false;
+	s->resumed = true;
 	s->peer = peer;
 
 	TM_LOG_DBG("  subscription 0x%08x RESUMED on session 0x%04x after the reboot",
@@ -1822,38 +1799,56 @@ static int send_subscription_report(struct sub_state *s,
 	return rc;
 }
 
+/* Does subscription path @p p cover the concrete path @p c? */
+static bool path_covers(const struct matter_im_path *p, const struct matter_im_path *c)
+{
+	return (!p->have_endpoint || p->endpoint == c->endpoint) &&
+	       (!p->have_cluster || p->cluster == c->cluster) &&
+	       (!p->have_attribute || p->attribute == c->attribute);
+}
+
 /**
- * Send a Matter lock state subscription report to one CASE session. Builds a TLV-encoded data
- * report for the DoorLock cluster LockState attribute and sends it as an initiator exchange. Logs
- * the subscription ID and byte counts. Returns silently if the session is not in use, active, and
- * valid.
+ * Report to one subscriber: the changed attributes it covers, then the events
+ * it has not been sent. @p changes NULL is the heartbeat, which carries no
+ * attribute and is sent even empty, because an empty report is what keeps a
+ * subscription alive.
  */
-static void notify_lock_state(struct sub_state *s)
+static void notify_one(struct sub_state *s, const uint32_t *changes)
 {
 	/*
 	 * On the stack, not static: struct matter_im_read carries
-	 * MATTER_IM_MAX_PATHS of them and this report uses ONE, so keeping it in
-	 * BSS spends ~264 B permanently to describe a single attribute. This
-	 * runs on the system work queue, which has 2,272 B of measured headroom
-	 * over its 3,872 B peak, and this path is shallow.
+	 * MATTER_IM_MAX_PATHS of them and a report uses a few, so keeping it in
+	 * BSS spends ~264 B permanently. This runs on the system work queue,
+	 * which has 2,272 B of measured headroom over its 3,872 B peak, and this
+	 * path is shallow.
 	 */
 	struct matter_im_read one;
 	size_t framed = 0u;
 	uint16_t session_id;
 	uint32_t subscription_id;
+	bool events;
 	int rc;
 
 	if (!s->in_use || !s->active || s->session_id == 0u || !s->peer.valid) {
 		return;
 	}
 	memset(&one, 0, sizeof(one));
-	one.n_paths = 1u;
-	one.paths[0].endpoint = MATTER_ENDPOINT_LOCK;
-	one.paths[0].have_endpoint = true;
-	one.paths[0].cluster = MATTER_CLUSTER_DOOR_LOCK;
-	one.paths[0].have_cluster = true;
-	one.paths[0].attribute = MATTER_ATTR_DL_LOCK_STATE;
-	one.paths[0].have_attribute = true;
+	for (size_t bit = 0u; changes != NULL && bit < TM_ATTRS_MAX; bit++) {
+		struct matter_im_path c;
+		const struct tm_cluster *cl;
+		bool want = s->resumed;
+
+		if ((changes[bit / 32u] & (1u << (bit % 32u))) == 0u ||
+		    !matter_clusters_change_path(bit, &c, &cl)) {
+			continue;
+		}
+		for (uint8_t i = 0u; !want && i < s->read.n_paths; i++) {
+			want = path_covers(&s->read.paths[i], &c);
+		}
+		if (want && one.n_paths < MATTER_IM_MAX_PATHS) {
+			one.paths[one.n_paths++] = c;
+		}
+	}
 	/* Non-zero is what makes this a subscription report rather than the
 	 * answer to a read the peer never sent. */
 	one.subscription_id = s->id;
@@ -1865,24 +1860,30 @@ static void notify_lock_state(struct sub_state *s)
 	 * so a controller that never mentioned events sees exactly the report it
 	 * always did.
 	 */
+	events = s->read.n_event_paths > 0u && s_info.event_count > 0u &&
+		 s_info.next_event_number >= s->event_min;
 	if (s->read.n_event_paths > 0u) {
 		one.n_event_paths = s->read.n_event_paths;
 		memcpy(one.event_paths, s->read.event_paths, sizeof(one.event_paths));
 		one.event_min = s->event_min;
+	}
+	/* A change this subscriber does not cover is not news to it. */
+	if (changes != NULL && one.n_paths == 0u && !events) {
+		return;
 	}
 
 	session_id = s->session_id;
 	subscription_id = s->id;
 	rc = send_subscription_report(s, &one, &framed);
 	/*
-	 * BACK AT INF after a spell at DBG, and the demotion was a mistake worth
-	 * recording: this line reports whether a controller was TOLD, and rc is
-	 * how a dead subscription is told apart from one that never matched. It
-	 * reads like bookkeeping and is the only evidence that the state a
-	 * person can see on a hub came from the state the bolt is actually in.
+	 * At INF, not DBG, and the spell this line once spent at DBG was a
+	 * mistake worth recording: it reports whether a controller was TOLD, and
+	 * rc is how a dead subscription is told apart from one that never
+	 * matched. It reads like bookkeeping and is the only evidence that the
+	 * state a person can see on a hub came from the state the device is in.
 	 */
-	TM_LOG_INF("  LockState report to subscription 0x%08x, %u B, rc=%d", (unsigned int)s->id,
-		(unsigned int)framed, rc);
+	TM_LOG_INF("  report to subscription 0x%08x: %u attribute(s), %u B, rc=%d",
+		(unsigned int)s->id, (unsigned int)one.n_paths, (unsigned int)framed, rc);
 	/*
 	 * Advance the watermark only on a report that went out. Moving it before
 	 * the send would drop an unlock on a failed transmit, and the subscriber
@@ -1895,44 +1896,40 @@ static void notify_lock_state(struct sub_state *s)
 }
 
 /**
- * Work callback that sends lock state subscription reports to all CASE sessions.
+ * Tell every subscriber what changed, then let each changed cluster persist.
  */
-/* The LockState last written to storage; set at boot from what was read. */
-static uint8_t s_lock_state_saved;
-
 static void notify_work_fn(void)
 {
-	uint8_t lock_state;
+	uint32_t changes[MATTER_CHANGE_WORDS];
+	const struct tm_cluster *last = NULL;
+	uint16_t last_ep = 0u;
 
 	tm_lock();
-
+	matter_clusters_take_changes(changes);
 	for (uint8_t i = 0u; i < MATTER_CASE_SESSIONS; i++) {
-		notify_lock_state(&s_subs[i]);
+		notify_one(&s_subs[i], changes);
 	}
-	lock_state = s_info.lock_state;
 	tm_unlock();
-	/* Persisted here, on the work queue, rather than in the command path on
-	 * OpenThread's small stack; and outside the lock, because a flash write
-	 * can wait on a sector erase while the Thread receive path drops every
-	 * datagram that finds the lock held. */
-	if (lock_state != s_lock_state_saved && matter_dl_lock_state_store(lock_state) == 0) {
-		s_lock_state_saved = lock_state;
-	}
-}
+	/*
+	 * Outside the lock, on this work queue: a cluster persists here, and a
+	 * flash write can wait on a sector erase while the Thread receive path
+	 * drops every datagram that finds the lock held. One call per cluster;
+	 * its bits are adjacent.
+	 */
+	for (size_t bit = 0u; bit < TM_ATTRS_MAX; bit++) {
+		struct matter_im_path p;
+		const struct tm_cluster *cl;
 
-/**
- * Submit lock state change notification to the work queue, and tell the
- * application, which moves the bolt.
- *
- * The application is told from here because this is the one point every mover
- * reaches: a Home tile tap arrives through the Door Lock cluster, which writes
- * s_info.lock_state itself. In the source project hanging the light off a
- * second path alone gave a board whose LED ignored the app.
- */
-static void notify_lock_state_changed(void)
-{
-	matter_commission_lock_state(s_info.lock_state);
-	(void)tm_work_schedule(TM_WORK_NOTIFY, 0u);
+		if ((changes[bit / 32u] & (1u << (bit % 32u))) == 0u ||
+		    !matter_clusters_change_path(bit, &p, &cl)) {
+			continue;
+		}
+		if (cl->changed != NULL && (cl != last || p.endpoint != last_ep)) {
+			cl->changed(p.endpoint);
+		}
+		last = cl;
+		last_ep = p.endpoint;
+	}
 }
 
 /*
@@ -1944,7 +1941,7 @@ static void notify_lock_state_changed(void)
  * than as a missing message.
  *
  * One timer for every subscription rather than one each: they all carry the
- * same attribute and the period is a floor, not a schedule, so reporting early
+ * same empty keep-alive and the period is a floor, not a schedule, so reporting early
  * is free and reporting per-subscription would cost six timers on a part with
  * under 5 KB of RAM. The period is deliberately well under the ceiling -- a
  * report costs ~67 bytes on a sleepy link whose round trip has been measured at
@@ -2023,7 +2020,7 @@ static uint32_t subscription_heartbeat_period_s(void)
 }
 
 /**
- * Work callback that sends lock state subscription reports to all active CASE sessions and
+ * Work callback that sends a keep-alive report to all active CASE sessions and
  * reschedules itself only if at least one subscription remains active.
  */
 static void heartbeat_work_fn(void)
@@ -2034,7 +2031,7 @@ static void heartbeat_work_fn(void)
 
 	for (uint8_t i = 0u; i < MATTER_CASE_SESSIONS; i++) {
 		if (s_subs[i].in_use && s_subs[i].active) {
-			notify_lock_state(&s_subs[i]);
+			notify_one(&s_subs[i], NULL);
 			any = true;
 		}
 	}
@@ -3768,6 +3765,10 @@ int matter_commission_init(const struct matter_commission_config *cfg)
 	if (cfg == NULL || cfg->verifier_hex == NULL || cfg->salt_hex == NULL) {
 		return -EINVAL;
 	}
+	if (matter_clusters_set_endpoints(cfg->endpoints, cfg->n_endpoints) != MATTER_OK) {
+		TM_LOG_ERR("the endpoint table is invalid or past the build's limits");
+		return -EINVAL;
+	}
 	s_cfg = cfg;
 	s_info_defaults();
 	s_info.commissioning_hooks = &k_commissioning_hooks;
@@ -3838,10 +3839,16 @@ int matter_commission_init(const struct matter_commission_config *cfg)
 	 * values, and a stored value is right even on a node whose fabric did
 	 * not survive -- the next commissioner reads what the last one set.
 	 */
-	(void)matter_dl_attr_load(&s_info);
-	s_lock_state_saved = s_info.lock_state;
-	/* Put the bolt where the stored LockState says it is. */
-	matter_commission_lock_state(s_info.lock_state);
+	(void)tm_kv_init();
+	for (uint8_t i = 0u; matter_clusters_endpoint_at(i) != NULL; i++) {
+		const struct tm_endpoint *ep = matter_clusters_endpoint_at(i);
+
+		for (uint8_t c = 0u; c < ep->n_clusters; c++) {
+			if (ep->clusters[c]->init != NULL) {
+				ep->clusters[c]->init(ep->id);
+			}
+		}
+	}
 	matter_ble_set_link_handler(on_link_reset);
 	matter_ble_set_tx_handler(matter_commission_ble_tx_complete);
 	matter_ble_set_msg_handler(on_message);
