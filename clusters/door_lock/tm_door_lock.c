@@ -281,6 +281,8 @@ static void lock_init(uint16_t endpoint)
 	size_t len;
 
 	s_endpoint = endpoint;
+	/* Until a stored value says otherwise. The sample's bolt powers up
+	 * locked, and 0 (NotFullyLocked) is what a jammed bolt reports. */
 	s_lock_state = MATTER_DL_LOCK_STATE_LOCKED;
 	len = sizeof(relock);
 	if (tm_kv_get(TM_KV_KEY_MATTER_DL_AUTO_RELOCK, &relock, &len) == TM_KV_OK &&

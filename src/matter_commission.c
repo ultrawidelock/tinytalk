@@ -92,8 +92,11 @@ static void s_info_defaults(void)
 {
 	s_info.vendor_id = s_cfg->vendor_id;
 	s_info.product_id = s_cfg->product_id;
-	/* Until a stored value says otherwise. The sample's bolt powers up
-	 * locked, and 0 (NotFullyLocked) is what a jammed bolt reports. */
+	s_info.vendor_name = s_cfg->vendor_name;
+	s_info.product_name = s_cfg->product_name;
+	s_info.hardware_version = s_cfg->hardware_version;
+	s_info.software_version = s_cfg->software_version;
+	s_info.software_version_str = s_cfg->software_version_str;
 	s_info.breadcrumb = 0u;
 	s_info.regulatory_config = MATTER_REGULATORY_INDOOR;
 	s_info.location_capability = MATTER_REGULATORY_INDOOR;

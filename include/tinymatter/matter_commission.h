@@ -28,6 +28,15 @@ struct matter_commission_config {
 	const char *salt_hex;
 	/** PBKDF2 iterations the verifier was derived with. */
 	uint32_t iterations;
+	/*
+	 * Basic Information. A NULL name reads "tinymatter"; a NULL version
+	 * string reads as the number it stands beside.
+	 */
+	const char *vendor_name;
+	const char *product_name;
+	uint16_t hardware_version;
+	uint32_t software_version;
+	const char *software_version_str;
 	/** The application's endpoints (tm_app.h), served beside endpoint 0. */
 	const struct tm_endpoint *endpoints;
 	uint8_t n_endpoints;

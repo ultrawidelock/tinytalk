@@ -47,6 +47,9 @@ static const struct matter_commission_config s_matter_cfg = {
 	.verifier_hex = CONFIG_TINYMATTER_SPAKE2P_VERIFIER,
 	.salt_hex = CONFIG_TINYMATTER_SPAKE2P_SALT,
 	.iterations = CONFIG_TINYMATTER_SPAKE2P_ITERATIONS,
+	.product_name = "tinymatter door lock",
+	.hardware_version = 1u,
+	.software_version = 1u,
 	.endpoints = &tm_door_lock_endpoint,
 	.n_endpoints = 1u,
 };

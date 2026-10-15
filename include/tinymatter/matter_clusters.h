@@ -368,6 +368,12 @@ struct matter_fabric_acl {
 struct matter_device_info {
 	uint16_t vendor_id;
 	uint16_t product_id;
+	/** Basic Information; see matter_commission_config. */
+	const char *vendor_name;
+	const char *product_name;
+	uint16_t hardware_version;
+	uint32_t software_version;
+	const char *software_version_str;
 	/** Stable, per-device serial supplied by the hardware port. */
 	char serial_number[MATTER_SERIAL_NUMBER_MAX + 1u];
 	/**

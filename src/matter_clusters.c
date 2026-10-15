@@ -37,10 +37,7 @@
 #define TAG_CAPMIN_SUBSCRIPTIONS 1u
 
 /* Strings this node reports about itself. */
-#ifndef MATTER_VENDOR_NAME
-#define MATTER_VENDOR_NAME   "tinymatter"
-#endif
-#define MATTER_PRODUCT_NAME  "tinymatter door lock"
+#define MATTER_NAME_FALLBACK "tinymatter"
 #define MATTER_SERIAL_NUMBER_FALLBACK "TM-UNKNOWN"
 
 /* Descriptor/Structs.h:43-44, DeviceTypeStruct. */
@@ -1078,15 +1075,19 @@ static void attr_value(void *ctx, uint16_t endpoint, uint32_t cluster, uint32_t 
 			(void)matter_tlv_put_u64(w, tag, MATTER_DATA_MODEL_REVISION);
 			return;
 		case MATTER_ATTR_BASIC_VENDOR_NAME:
-			(void)matter_tlv_put_utf8(w, tag, MATTER_VENDOR_NAME,
-						  strlen(MATTER_VENDOR_NAME));
+		case MATTER_ATTR_BASIC_PRODUCT_NAME: {
+			const char *name = attribute == MATTER_ATTR_BASIC_VENDOR_NAME
+						   ? info->vendor_name
+						   : info->product_name;
+
+			if (name == NULL) {
+				name = MATTER_NAME_FALLBACK;
+			}
+			(void)matter_tlv_put_utf8(w, tag, name, strlen(name));
 			return;
+		}
 		case MATTER_ATTR_BASIC_VENDOR_ID:
 			(void)matter_tlv_put_u64(w, tag, info->vendor_id);
-			return;
-		case MATTER_ATTR_BASIC_PRODUCT_NAME:
-			(void)matter_tlv_put_utf8(w, tag, MATTER_PRODUCT_NAME,
-						  strlen(MATTER_PRODUCT_NAME));
 			return;
 		case MATTER_ATTR_BASIC_PRODUCT_ID:
 			(void)matter_tlv_put_u64(w, tag, info->product_id);
@@ -1102,13 +1103,41 @@ static void attr_value(void *ctx, uint16_t endpoint, uint32_t cluster, uint32_t 
 			(void)matter_tlv_put_utf8(w, tag, "XX", 2u);
 			return;
 		case MATTER_ATTR_BASIC_HARDWARE_VERSION:
+			(void)matter_tlv_put_u64(w, tag, info->hardware_version);
+			return;
 		case MATTER_ATTR_BASIC_SOFTWARE_VERSION:
-			(void)matter_tlv_put_u64(w, tag, 1u);
+			(void)matter_tlv_put_u64(w, tag, info->software_version);
 			return;
 		case MATTER_ATTR_BASIC_HARDWARE_VERSION_STR:
-		case MATTER_ATTR_BASIC_SOFTWARE_VERSION_STR:
-			(void)matter_tlv_put_utf8(w, tag, "1", 1u);
+		case MATTER_ATTR_BASIC_SOFTWARE_VERSION_STR: {
+			/* The number itself, unless the application named it. */
+			char num[11];
+			const char *v = attribute == MATTER_ATTR_BASIC_SOFTWARE_VERSION_STR
+						? info->software_version_str
+						: NULL;
+			uint32_t n = attribute == MATTER_ATTR_BASIC_SOFTWARE_VERSION_STR
+					     ? info->software_version
+					     : info->hardware_version;
+			size_t len = 0u;
+
+			if (v == NULL) {
+				char rev[10];
+				size_t k = 0u;
+
+				do {
+					rev[k++] = (char)('0' + n % 10u);
+					n /= 10u;
+				} while (n != 0u);
+				while (k > 0u) {
+					num[len++] = rev[--k];
+				}
+				v = num;
+			} else {
+				len = strlen(v);
+			}
+			(void)matter_tlv_put_utf8(w, tag, v, len);
 			return;
+		}
 		case MATTER_ATTR_BASIC_SERIAL_NUMBER:
 		case MATTER_ATTR_BASIC_UNIQUE_ID:
 			{

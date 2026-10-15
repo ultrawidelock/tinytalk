@@ -29,6 +29,9 @@ static const struct matter_commission_config k_cfg = {
 			"0a2e896837995232334c319994d790ee2d09fe5cb4a229503234f8479eb3d308",
 	.salt_hex = "04f7398d5b49b5b5db8a5e61c8aece1d1a230e3b9085199d854ef034fd30a89b",
 	.iterations = 20000u,
+	.product_name = "tinymatter door lock",
+	.hardware_version = 1u,
+	.software_version = 1u,
 	.endpoints = &tm_door_lock_endpoint,
 	.n_endpoints = 1u,
 };

@@ -586,6 +586,68 @@ void test_matter_clusters(void)
 		     memcmp(value, serial, value_len) == 0);
 	}
 
+	t_group("Basic Information names and versions come from the application");
+	{
+		struct matter_tlv_writer w;
+		struct matter_tlv_reader r;
+		const char *value = NULL;
+		size_t value_len = 0u;
+		uint8_t out[64];
+		uint64_t v = 0u;
+
+		fill_info(&info);
+		matter_clusters_init(&srv, &info);
+		matter_tlv_writer_init(&w, out, sizeof(out));
+		srv.value(srv.ctx, MATTER_ENDPOINT_ROOT, MATTER_CLUSTER_BASIC_INFORMATION,
+			  MATTER_ATTR_BASIC_PRODUCT_NAME, false, &w, MATTER_TLV_ANON);
+		matter_tlv_reader_init(&r, out, w.len);
+		T_OK("an unnamed product reads tinymatter",
+		     matter_tlv_next(&r) == 0 && matter_tlv_get_utf8(&r, &value, &value_len) == 0 &&
+			     value_len == 10u && memcmp(value, "tinymatter", 10u) == 0);
+
+		info.product_name = "a lock";
+		info.software_version = 4096u;
+		matter_tlv_writer_init(&w, out, sizeof(out));
+		srv.value(srv.ctx, MATTER_ENDPOINT_ROOT, MATTER_CLUSTER_BASIC_INFORMATION,
+			  MATTER_ATTR_BASIC_PRODUCT_NAME, false, &w, MATTER_TLV_ANON);
+		matter_tlv_reader_init(&r, out, w.len);
+		T_OK("a named one reads its name",
+		     matter_tlv_next(&r) == 0 && matter_tlv_get_utf8(&r, &value, &value_len) == 0 &&
+			     value_len == 6u && memcmp(value, "a lock", 6u) == 0);
+
+		matter_tlv_writer_init(&w, out, sizeof(out));
+		srv.value(srv.ctx, MATTER_ENDPOINT_ROOT, MATTER_CLUSTER_BASIC_INFORMATION,
+			  MATTER_ATTR_BASIC_SOFTWARE_VERSION, false, &w, MATTER_TLV_ANON);
+		matter_tlv_reader_init(&r, out, w.len);
+		T_OK("SoftwareVersion is the number given",
+		     matter_tlv_next(&r) == 0 && matter_tlv_get_u64(&r, &v) == 0 && v == 4096u);
+
+		matter_tlv_writer_init(&w, out, sizeof(out));
+		srv.value(srv.ctx, MATTER_ENDPOINT_ROOT, MATTER_CLUSTER_BASIC_INFORMATION,
+			  MATTER_ATTR_BASIC_SOFTWARE_VERSION_STR, false, &w, MATTER_TLV_ANON);
+		matter_tlv_reader_init(&r, out, w.len);
+		T_OK("and with no string given, the string is that number",
+		     matter_tlv_next(&r) == 0 && matter_tlv_get_utf8(&r, &value, &value_len) == 0 &&
+			     value_len == 4u && memcmp(value, "4096", 4u) == 0);
+
+		info.software_version_str = "4.0.96";
+		matter_tlv_writer_init(&w, out, sizeof(out));
+		srv.value(srv.ctx, MATTER_ENDPOINT_ROOT, MATTER_CLUSTER_BASIC_INFORMATION,
+			  MATTER_ATTR_BASIC_SOFTWARE_VERSION_STR, false, &w, MATTER_TLV_ANON);
+		matter_tlv_reader_init(&r, out, w.len);
+		T_OK("a string given is the string reported",
+		     matter_tlv_next(&r) == 0 && matter_tlv_get_utf8(&r, &value, &value_len) == 0 &&
+			     value_len == 6u && memcmp(value, "4.0.96", 6u) == 0);
+
+		matter_tlv_writer_init(&w, out, sizeof(out));
+		srv.value(srv.ctx, MATTER_ENDPOINT_ROOT, MATTER_CLUSTER_BASIC_INFORMATION,
+			  MATTER_ATTR_BASIC_HARDWARE_VERSION_STR, false, &w, MATTER_TLV_ANON);
+		matter_tlv_reader_init(&r, out, w.len);
+		T_OK("hardware version 0 reads \"0\"",
+		     matter_tlv_next(&r) == 0 && matter_tlv_get_utf8(&r, &value, &value_len) == 0 &&
+			     value_len == 1u && value[0] == '0');
+	}
+
 	t_group("AutoRelockTime is the lock endpoint's writable attribute");
 	{
 		struct matter_im_path path;
