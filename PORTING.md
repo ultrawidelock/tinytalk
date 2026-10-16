@@ -17,7 +17,7 @@ and fails if the list changes (`tests/seams.expected`, 46 symbols).
 | `matter_thread.h` | `matter_thread_{start,clear,wait_attached,attached_to,advertise,unadvertise,advertise_commissionable,unadvertise_commissionable,peer_current,send_to}` | `ports/zephyr/thread/matter_thread_port.c` | `tests/host/test_matter_thread_stub.c`, `tests/host/host_port.c` |
 | `matter_crypto.h`, `matter_attest.h`, `matter_case.h` | `crypto_aes_ecb_encrypt`, `matter_attest_ec_keygen`, `matter_attest_ecdsa_sign`, `matter_case_{ecdh,sign,verify}` | `backends/psa/tm_psa.c` | `tests/host/aes_ref.c`, `tests/host/test_matter_{attest,case}_stub.c` |
 | `matter_spake2p.h` | `ocrypto_spake2p_p256_{reduce,check_key,get_key_share,get_ZV}` | `backends/oberon/oberon.cmake` or `backends/mbedtls/` | `backends/mbedtls/` or `tests/host/spakefake` (`SPAKE=fake`) |
-| `matter_commission.h` | `matter_commission_readvertise` | the application (`samples/door-lock/src/main.c`) | `tests/host/host_port.c` |
+| `matter_commission.h` | `matter_commission_readvertise` | the application, for example tinylock's door-lock | `tests/host/host_port.c` |
 | `tm_log.h` | optional: build with `-DTM_LOG_HEADER="<header>"` | `ports/zephyr/tm_log_zephyr.h` | compiled out |
 
 `tm_hash.c` (SHA-256, HMAC, HKDF) is portable and lives in `src/`; `make seams`

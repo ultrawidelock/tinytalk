@@ -37,7 +37,7 @@ with everything platform-specific behind narrow seams.
   changed to every subscriber that covers it.
 - A Door Lock cluster module with no optional features: LockDoor, UnlockDoor,
   LockState, AutoRelockTime and the LockOperation event, stored across
-  reboots. In `samples/door-lock` it drives LED0.
+  reboots. In tinylock's door-lock sample it drives LED0.
 - Three fabrics, enough for one Apple Home (it uses two) plus one spare.
 
 What it does not do: Matter certification, Wi-Fi, OTA updates, groups, door
@@ -59,7 +59,7 @@ device built from this repository is an uncertified test accessory, and Apple
 Home says so while adding it.
 
 The default setup code is the same for every device built from this tree:
-`3650-503-5696` (discriminator 0xF00). The sample prints it at boot. To use
+`3650-503-5696` (discriminator 0xF00). tinylock's door-lock sample prints it at boot. To use
 your own, run `scripts/spake2p_verifier.py --passcode <p>` and put its output
 in your configuration.
 
@@ -73,7 +73,6 @@ src/                  the node, portable C11
 clusters/             cluster modules for application endpoints: door_lock/
 backends/             crypto: psa/ (P-256, AES, random), oberon/ and mbedtls/ (SPAKE2+)
 ports/zephyr/         platform, BLE transport, storage, Thread
-samples/door-lock/    the nRF52833 sample
 scripts/              SPAKE2+ verifier and pairing-code generator
 tests/host/           unit tests and the host port
 ```
@@ -94,28 +93,16 @@ or set `MBEDTLS_PREFIX`); `make test SPAKE=fake` needs no library.
 
 ### The sample
 
-From inside an nRF Connect SDK v3.3.0 workspace:
+The door-lock sample lives in the tinylock repository, which takes this tree
+as a module from the command line. From inside an nRF Connect SDK v3.3.0
+workspace:
 
 ```
-west build -b decawave_dwm3001cdk -d <build-dir> <repo>/samples/door-lock
-west flash --erase -d <build-dir>
+west build -b decawave_dwm3001cdk -d <build-dir> <tinylock>/door-lock -- -DZEPHYR_EXTRA_MODULES=<tinytalk>
 ```
 
-Use `-b nrf52833dk/nrf52833` for the nRF52833 DK. Logs go to SEGGER RTT.
-
-For a release image, add `overlay-release.conf`: no logging, no RTT console,
-no Bluetooth asserts, 22,004 B less flash. It says nothing over RTT, so debug
-with the plain build.
-
-```
-west build -b decawave_dwm3001cdk -d <build-dir> <repo>/samples/door-lock -- -DEXTRA_CONF_FILE=overlay-release.conf
-```
-
-The sample uses the board's `led0` and `sw0`. LED0 is on while the door is
-unlocked. A short press of the button opens a 15-minute commissioning window;
-holding it for 5 s erases the fabrics and reboots. On the DWM3001CDK, `led0`
-is D9 (green) and `sw0` is SW2. SW1 is the hardware reset: it reboots and
-erases nothing.
+tinylock's README covers the stack fragments, the release overlay and the
+board.
 
 ## Using it in a Zephyr application
 
@@ -131,7 +118,8 @@ manifest:
 ```
 
 or with `list(APPEND ZEPHYR_EXTRA_MODULES <path-to-tinytalk>)` before
-`find_package(Zephyr)`, as `samples/door-lock/CMakeLists.txt` does. Then pick
+`find_package(Zephyr)`, or `-DZEPHYR_EXTRA_MODULES=<path-to-tinytalk>` on the
+build command line, as tinylock's door-lock takes it. Then pick
 what to build:
 
 | Option | What it adds |
