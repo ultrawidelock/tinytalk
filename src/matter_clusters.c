@@ -63,6 +63,7 @@ static const uint32_t k_root_servers[] = {
 	MATTER_CLUSTER_BASIC_INFORMATION,
 	MATTER_CLUSTER_GENERAL_COMMISSIONING,
 	MATTER_CLUSTER_NETWORK_COMMISSIONING,
+	MATTER_CLUSTER_GENERAL_DIAGNOSTICS,
 	MATTER_CLUSTER_OPERATIONAL_CREDENTIALS,
 	MATTER_CLUSTER_ADMIN_COMMISSIONING,
 };
@@ -306,6 +307,26 @@ static void app_req(const struct matter_device_info *info, uint16_t endpoint,
 	req->fabric_index = info->accessing_fabric_index;
 	req->fabric_filtered = fabric_filtered;
 	req->node_id = info->accessing_node_id;
+}
+
+/*
+ * Root clusters described by a struct tm_cluster, served through the same
+ * table path as an application cluster: the node answers their five globals,
+ * checks their privileges and dispatches their callbacks from the table. The
+ * older root clusters predate the table and keep their hand-written paths.
+ */
+static const struct tm_cluster *const k_root_tables[] = {
+	&matter_general_diagnostics,
+};
+
+static const struct tm_cluster *root_table(uint32_t cluster)
+{
+	for (size_t i = 0u; i < sizeof(k_root_tables) / sizeof(k_root_tables[0]); i++) {
+		if (k_root_tables[i]->id == cluster) {
+			return k_root_tables[i];
+		}
+	}
+	return NULL;
 }
 
 int matter_clusters_set_endpoints(const struct tm_endpoint *eps, uint8_t n)
@@ -686,7 +707,7 @@ static bool has_cluster(void *ctx, uint16_t endpoint, uint32_t cluster)
 	       cluster == MATTER_CLUSTER_NETWORK_COMMISSIONING ||
 	       cluster == MATTER_CLUSTER_DESCRIPTOR || cluster == MATTER_CLUSTER_ACCESS_CONTROL ||
 	       cluster == MATTER_CLUSTER_OPERATIONAL_CREDENTIALS ||
-	       cluster == MATTER_CLUSTER_ADMIN_COMMISSIONING;
+	       cluster == MATTER_CLUSTER_ADMIN_COMMISSIONING || root_table(cluster) != NULL;
 }
 
 /**
@@ -759,6 +780,10 @@ static void put_id_list(struct matter_tlv_writer *w, matter_tlv_tag_t tag, const
  * cluster IDs with the root -- Descriptor is on all of them -- and a single
  * flat switch on cluster would answer the root's Descriptor for the lock.
  */
+static void table_attr_value(const struct matter_device_info *info, const struct tm_cluster *c,
+			     uint16_t endpoint, uint32_t attribute, bool fabric_filtered,
+			     struct matter_tlv_writer *w, matter_tlv_tag_t tag);
+
 static void app_attr_value(const struct matter_device_info *info, uint16_t endpoint,
 			   uint32_t cluster, uint32_t attribute, bool fabric_filtered,
 			   struct matter_tlv_writer *w, matter_tlv_tag_t tag)
@@ -766,7 +791,6 @@ static void app_attr_value(const struct matter_device_info *info, uint16_t endpo
 	size_t index = 0u;
 	const struct tm_endpoint *ep = app_endpoint(endpoint, &index);
 	const struct tm_cluster *c;
-	struct tm_req req;
 
 	if (ep == NULL) {
 		return;
@@ -801,6 +825,17 @@ static void app_attr_value(const struct matter_device_info *info, uint16_t endpo
 	if (c == NULL) {
 		return;
 	}
+	table_attr_value(info, c, endpoint, attribute, fabric_filtered, w, tag);
+}
+
+/* One attribute of a table-described cluster: the globals from the table,
+ * everything else from its read() callback. */
+static void table_attr_value(const struct matter_device_info *info, const struct tm_cluster *c,
+			     uint16_t endpoint, uint32_t attribute, bool fabric_filtered,
+			     struct matter_tlv_writer *w, matter_tlv_tag_t tag)
+{
+	struct tm_req req;
+
 	switch (attribute) {
 	case MATTER_ATTR_FEATURE_MAP:
 		(void)matter_tlv_put_u64(w, tag, c->features);
@@ -912,6 +947,11 @@ static void attr_value(void *ctx, uint16_t endpoint, uint32_t cluster, uint32_t 
 	 */
 	if (endpoint != MATTER_ENDPOINT_ROOT) {
 		app_attr_value(info, endpoint, cluster, attribute, fabric_filtered, w, tag);
+		return;
+	}
+	if (root_table(cluster) != NULL) {
+		table_attr_value(info, root_table(cluster), endpoint, attribute, fabric_filtered, w,
+				 tag);
 		return;
 	}
 
@@ -1435,6 +1475,10 @@ static size_t list_attrs(void *ctx, uint16_t endpoint, uint32_t cluster, const u
 		}
 		*out = c->attrs;
 		return c->n_attrs;
+	}
+	if (root_table(cluster) != NULL) {
+		*out = root_table(cluster)->attrs;
+		return root_table(cluster)->n_attrs;
 	}
 	if (cluster == MATTER_CLUSTER_BASIC_INFORMATION) {
 		*out = k_basic_attrs;
@@ -2487,6 +2531,32 @@ static bool fabric_index_committed(const struct matter_device_info *info, uint8_
 	return false;
 }
 
+/* A command on a table-described cluster, checked against the table. */
+static uint8_t table_invoke(struct matter_device_info *info, const struct tm_cluster *c,
+			    const struct matter_im_invoke *inv, uint32_t *response_command)
+{
+	size_t accessing_slot = fabric_slot_for_index(info, info->accessing_fabric_index);
+	struct tm_req req;
+
+	/* PASE, a removed fabric, and a provisional identity cannot operate
+	 * the lock. */
+	if (accessing_slot >= MATTER_SUPPORTED_FABRICS || info->accessing_node_id == 0u) {
+		return MATTER_IM_STATUS_UNSUPPORTED_ACCESS;
+	}
+	if (c->invoke == NULL || !id_listed(c->accepted, c->n_accepted, inv->command)) {
+		return MATTER_IM_STATUS_UNSUPPORTED_COMMAND;
+	}
+	if (!fabric_slot_has_privilege(info, accessing_slot,
+				       c->invoke_privilege != 0u ? c->invoke_privilege
+								 : MATTER_AC_PRIVILEGE_OPERATE,
+				       inv->endpoint, inv->cluster)) {
+		return MATTER_IM_STATUS_UNSUPPORTED_ACCESS;
+	}
+	app_req(info, inv->endpoint, false, &req);
+	return c->invoke(&req, inv->command, inv->has_fields ? inv->fields : NULL,
+			 inv->has_fields ? inv->fields_len : 0u, response_command);
+}
+
 static uint8_t command(void *ctx, const struct matter_im_invoke *inv, uint32_t *response_command)
 {
 	struct matter_device_info *info = (struct matter_device_info *)ctx;
@@ -2507,9 +2577,6 @@ static uint8_t command(void *ctx, const struct matter_im_invoke *inv, uint32_t *
 	if (inv->endpoint != MATTER_ENDPOINT_ROOT) {
 		const struct tm_endpoint *ep = app_endpoint(inv->endpoint, NULL);
 		const struct tm_cluster *c;
-		size_t accessing_slot =
-			fabric_slot_for_index(info, info->accessing_fabric_index);
-		struct tm_req req;
 
 		if (ep == NULL) {
 			return MATTER_IM_STATUS_UNSUPPORTED_ENDPOINT;
@@ -2518,24 +2585,10 @@ static uint8_t command(void *ctx, const struct matter_im_invoke *inv, uint32_t *
 		if (c == NULL) {
 			return MATTER_IM_STATUS_UNSUPPORTED_CLUSTER;
 		}
-		/* PASE, a removed fabric, and a provisional identity cannot operate
-		 * the lock. */
-		if (accessing_slot >= MATTER_SUPPORTED_FABRICS || info->accessing_node_id == 0u) {
-			return MATTER_IM_STATUS_UNSUPPORTED_ACCESS;
-		}
-		if (c->invoke == NULL || !id_listed(c->accepted, c->n_accepted, inv->command)) {
-			return MATTER_IM_STATUS_UNSUPPORTED_COMMAND;
-		}
-		if (!fabric_slot_has_privilege(info, accessing_slot,
-					       c->invoke_privilege != 0u
-						       ? c->invoke_privilege
-						       : MATTER_AC_PRIVILEGE_OPERATE,
-					       inv->endpoint, inv->cluster)) {
-			return MATTER_IM_STATUS_UNSUPPORTED_ACCESS;
-		}
-		app_req(info, inv->endpoint, false, &req);
-		return c->invoke(&req, inv->command, inv->has_fields ? inv->fields : NULL,
-				 inv->has_fields ? inv->fields_len : 0u, response_command);
+		return table_invoke(info, c, inv, response_command);
+	}
+	if (root_table(inv->cluster) != NULL) {
+		return table_invoke(info, root_table(inv->cluster), inv, response_command);
 	}
 	if (inv->cluster == MATTER_CLUSTER_ADMIN_COMMISSIONING) {
 		size_t accessing_slot =
@@ -2745,6 +2798,15 @@ static void command_fields(void *ctx, uint16_t endpoint, uint32_t cluster,
 		}
 		return;
 	}
+	if (root_table(cluster) != NULL) {
+		struct tm_req req;
+
+		if (root_table(cluster)->response != NULL) {
+			app_req(info, endpoint, false, &req);
+			root_table(cluster)->response(&req, response_command, w, tag);
+		}
+		return;
+	}
 	if (cluster == MATTER_CLUSTER_OPERATIONAL_CREDENTIALS) {
 		opcred_fields(info, response_command, w, tag);
 		return;
@@ -2846,6 +2908,34 @@ void matter_clusters_failsafe_expire(struct matter_device_info *info)
  * The value is stored byte-for-byte so it can be reported back. The bounded
  * access checker above decodes only the fields needed for CASE authorization.
  */
+/* A write to a table-described cluster, or to no cluster (@p c NULL). */
+static uint8_t table_write(struct matter_device_info *info, const struct tm_cluster *c,
+			   const struct matter_im_path *path, const uint8_t *data, size_t data_len)
+{
+	size_t accessing_slot = fabric_slot_for_index(info, info->accessing_fabric_index);
+	struct tm_req req;
+
+	if (!fabric_slot_has_privilege(info, accessing_slot,
+				       (c != NULL && c->write_privilege != 0u)
+					       ? c->write_privilege
+					       : MATTER_AC_PRIVILEGE_OPERATE,
+				       path->endpoint, path->cluster)) {
+		return MATTER_IM_STATUS_UNSUPPORTED_ACCESS;
+	}
+	if (c == NULL) {
+		return path->cluster == MATTER_CLUSTER_DESCRIPTOR ? MATTER_IM_STATUS_UNSUPPORTED_WRITE
+								  : MATTER_IM_STATUS_UNSUPPORTED_CLUSTER;
+	}
+	if (!id_listed(c->attrs, c->n_attrs, path->attribute)) {
+		return MATTER_IM_STATUS_UNSUPPORTED_ATTRIBUTE;
+	}
+	if (c->write == NULL) {
+		return MATTER_IM_STATUS_UNSUPPORTED_WRITE;
+	}
+	app_req(info, path->endpoint, false, &req);
+	return c->write(&req, path->attribute, data, data_len);
+}
+
 static uint8_t attr_write(void *ctx, const struct matter_im_path *path, const uint8_t *data,
 			  size_t data_len)
 {
@@ -2857,35 +2947,14 @@ static uint8_t attr_write(void *ctx, const struct matter_im_path *path, const ui
 	}
 	if (path->endpoint != MATTER_ENDPOINT_ROOT) {
 		const struct tm_endpoint *ep = app_endpoint(path->endpoint, NULL);
-		const struct tm_cluster *c;
-		size_t accessing_slot =
-			fabric_slot_for_index(info, info->accessing_fabric_index);
-		struct tm_req req;
 
 		if (ep == NULL) {
 			return MATTER_IM_STATUS_UNSUPPORTED_ENDPOINT;
 		}
-		c = app_cluster(ep, path->cluster);
-		if (!fabric_slot_has_privilege(info, accessing_slot,
-					       (c != NULL && c->write_privilege != 0u)
-						       ? c->write_privilege
-						       : MATTER_AC_PRIVILEGE_OPERATE,
-					       path->endpoint, path->cluster)) {
-			return MATTER_IM_STATUS_UNSUPPORTED_ACCESS;
-		}
-		if (c == NULL) {
-			return path->cluster == MATTER_CLUSTER_DESCRIPTOR
-				       ? MATTER_IM_STATUS_UNSUPPORTED_WRITE
-				       : MATTER_IM_STATUS_UNSUPPORTED_CLUSTER;
-		}
-		if (!id_listed(c->attrs, c->n_attrs, path->attribute)) {
-			return MATTER_IM_STATUS_UNSUPPORTED_ATTRIBUTE;
-		}
-		if (c->write == NULL) {
-			return MATTER_IM_STATUS_UNSUPPORTED_WRITE;
-		}
-		app_req(info, path->endpoint, false, &req);
-		return c->write(&req, path->attribute, data, data_len);
+		return table_write(info, app_cluster(ep, path->cluster), path, data, data_len);
+	}
+	if (root_table(path->cluster) != NULL) {
+		return table_write(info, root_table(path->cluster), path, data, data_len);
 	}
 	if (path->cluster != MATTER_CLUSTER_ACCESS_CONTROL) {
 		/* Every other cluster this node has is read-only, so the honest

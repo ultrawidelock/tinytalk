@@ -30,7 +30,7 @@ extern "C" {
 
 /** This contract's version. An adapter in another module BUILD_ASSERTs the
  *  value it was written for, so a change here stops its build. */
-#define MATTER_THREAD_API 1
+#define MATTER_THREAD_API 2
 
 /**
  * Hand @p dataset to the Thread stack and start attaching.
@@ -254,6 +254,29 @@ void matter_thread_advertise_reset(void);
  * answers false.
  */
 bool matter_thread_advertise_pending(void);
+
+/** How many of the interface's IPv6 addresses General Diagnostics reports. */
+#define MATTER_THREAD_IFACE_ADDRS_MAX 4u
+
+/** The Thread interface as General Diagnostics' NetworkInterfaces shows it. */
+struct matter_thread_iface {
+	/** Attached as child, router or leader. */
+	bool attached;
+	/** The IEEE 802.15.4 extended address, as HardwareAddress. */
+	uint8_t ext_addr[8];
+	uint8_t n_addrs;
+	uint8_t addrs[MATTER_THREAD_IFACE_ADDRS_MAX][16];
+};
+
+/**
+ * Describe the Thread interface. Added in MATTER_THREAD_API 2.
+ *
+ * Read on every NetworkInterfaces read, so it has to be quick. Unicast
+ * addresses only, at most MATTER_THREAD_IFACE_ADDRS_MAX of them.
+ *
+ * @return MATTER_OK, or MATTER_E_STATE with no Thread stack, @p out zeroed.
+ */
+int matter_thread_interface(struct matter_thread_iface *out);
 
 /**
  * Accept one reply while the inbound OpenThread callback is still current.

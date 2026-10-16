@@ -24,6 +24,7 @@ uint16_t g_thread_last_port;
 int g_thread_advertise_calls;
 int g_thread_unadvertise_calls;
 char g_thread_last_unadvertised[64];
+struct matter_thread_iface g_thread_iface;
 
 void test_matter_thread_stub_reset(void)
 {
@@ -44,6 +45,13 @@ void test_matter_thread_stub_reset(void)
 	g_thread_advertise_calls = 0;
 	g_thread_unadvertise_calls = 0;
 	memset(g_thread_last_unadvertised, 0, sizeof(g_thread_last_unadvertised));
+	memset(&g_thread_iface, 0, sizeof(g_thread_iface));
+}
+
+int matter_thread_interface(struct matter_thread_iface *out)
+{
+	*out = g_thread_iface;
+	return MATTER_OK;
 }
 
 int matter_thread_clear(void)

@@ -3964,6 +3964,7 @@ int matter_commission_init(const struct matter_commission_config *cfg)
 	 * not survive -- the next commissioner reads what the last one set.
 	 */
 	(void)tm_kv_init();
+	matter_general_diagnostics_boot();
 	for (uint8_t i = 0u; matter_clusters_endpoint_at(i) != NULL; i++) {
 		const struct tm_endpoint *ep = matter_clusters_endpoint_at(i);
 

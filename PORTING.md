@@ -4,7 +4,7 @@ The whole node, `src/` and `include/tinytalk/`, is C11 with no operating
 system, no radio stack and no crypto library. It needs libc's `mem*`, `str*`
 and `snprintf`, and nothing else it does not declare. Everything it declares
 and does not define, a port provides. `make seams` lists exactly those symbols
-and fails if the list changes (`tests/seams.expected`, 46 symbols).
+and fails if the list changes (`tests/seams.expected`, 47 symbols).
 
 ## What a port provides
 
@@ -14,7 +14,7 @@ and fails if the list changes (`tests/seams.expected`, 46 symbols).
 | `tm_platform.h` | `tm_random` | `backends/psa/tm_psa.c` | `tests/host/host_port.c` |
 | `tm_kv.h` | `tm_kv_{init,get,set,delete}` | `ports/zephyr/tm_kv_zephyr.c` | `tests/host/host_port.c` |
 | `matter_ble.h` | `matter_ble_send`, `matter_ble_set_{msg,link,tx}_handler`, `matter_ble_{set_,}discriminator` | `ports/zephyr/matter_ble_zephyr.c` | `tests/host/host_port.c` |
-| `matter_thread.h` | `matter_thread_{start,clear,wait_attached,attached_to,advertise,unadvertise,advertise_commissionable,unadvertise_commissionable,peer_current,send_to}` | `ports/zephyr/thread/matter_thread_port.c` | `tests/host/test_matter_thread_stub.c`, `tests/host/host_port.c` |
+| `matter_thread.h` | `matter_thread_{start,clear,wait_attached,attached_to,advertise,unadvertise,advertise_commissionable,unadvertise_commissionable,peer_current,send_to,interface}` | `ports/zephyr/thread/matter_thread_port.c` | `tests/host/test_matter_thread_stub.c`, `tests/host/host_port.c` |
 | `matter_crypto.h`, `matter_attest.h`, `matter_case.h` | `crypto_aes_ecb_encrypt`, `matter_attest_ec_keygen`, `matter_attest_ecdsa_sign`, `matter_case_{ecdh,sign,verify}` | `backends/psa/tm_psa.c` | `tests/host/aes_ref.c`, `tests/host/test_matter_{attest,case}_stub.c` |
 | `matter_spake2p.h` | `ocrypto_spake2p_p256_{reduce,check_key,get_key_share,get_ZV}` | `backends/oberon/oberon.cmake`, `backends/mbedtls/` or `backends/tinypsa/` | `backends/mbedtls/` or `tests/host/spakefake` (`SPAKE=fake`) |
 | `matter_commission.h` | `matter_commission_readvertise` | the application, for example tinylock's door-lock | `tests/host/host_port.c` |
@@ -58,14 +58,15 @@ A `matter_ble.h` provider defines all eight:
   `matter_ble_set_discriminator`, `matter_ble_discriminator`
 - called by the application: `matter_ble_start`, `matter_ble_advertise`
 
-A `matter_thread.h` provider defines all twelve:
+A `matter_thread.h` provider defines all thirteen:
 
 - called by the node: `matter_thread_start`, `matter_thread_clear`,
   `matter_thread_attached_to`, `matter_thread_wait_attached`,
   `matter_thread_advertise`, `matter_thread_unadvertise`,
   `matter_thread_advertise_commissionable`,
   `matter_thread_unadvertise_commissionable`, `matter_thread_peer_current`,
-  `matter_thread_send_to`
+  `matter_thread_send_to`, `matter_thread_interface` (General Diagnostics'
+  NetworkInterfaces, added in `MATTER_THREAD_API` 2)
 - called by the application: `matter_thread_advertise_reset`,
   `matter_thread_advertise_pending`
 
@@ -97,7 +98,7 @@ item and enters from there. `matter_ble.h` says, per handler, where the node
 expects to be called.
 
 Versions: `matter_ble.h` defines `MATTER_BLE_API` and `matter_thread.h`
-defines `MATTER_THREAD_API`, both 1. A provider asserts the value it was
+defines `MATTER_THREAD_API`; they are 1 and 2. A provider asserts the value it was
 written for, `BUILD_ASSERT(MATTER_BLE_API == 1)`, so a change to the
 contract stops its build instead of linking a stale adapter.
 

@@ -45,6 +45,33 @@ extern "C" {
 #define MATTER_CLUSTER_ACCESS_CONTROL          0x001Fu
 #define MATTER_CLUSTER_OPERATIONAL_CREDENTIALS 0x003Eu
 #define MATTER_CLUSTER_ADMIN_COMMISSIONING     0x003Cu
+#define MATTER_CLUSTER_GENERAL_DIAGNOSTICS     0x0033u
+
+/*
+ * General Diagnostics, which the Root Node device type requires
+ * (matter-devices.xml, MA-rootdevice). Revision 2 and the mandatory set from
+ * general-diagnostics-cluster.xml: NetworkInterfaces, RebootCount, UpTime,
+ * TestEventTriggersEnabled, TestEventTrigger and TimeSnapshot. Served from a
+ * table (src/matter_diagnostics.c).
+ */
+#define MATTER_GD_CLUSTER_REVISION             2u
+#define MATTER_ATTR_GD_NETWORK_INTERFACES      0x0000u
+#define MATTER_ATTR_GD_REBOOT_COUNT            0x0001u
+#define MATTER_ATTR_GD_UP_TIME                 0x0002u
+#define MATTER_ATTR_GD_TEST_EVENT_TRIGGERS     0x0008u
+#define MATTER_CMD_GD_TEST_EVENT_TRIGGER       0x00u
+#define MATTER_CMD_GD_TIME_SNAPSHOT            0x01u
+#define MATTER_CMD_GD_TIME_SNAPSHOT_RESPONSE   0x02u
+/* InterfaceTypeEnum Thread. */
+#define MATTER_GD_INTERFACE_THREAD             4u
+
+extern const struct tm_cluster matter_general_diagnostics;
+
+/**
+ * Count this boot in RebootCount, which persists in tm_kv. Called once per boot
+ * by matter_commission_init(), after storage is up.
+ */
+void matter_general_diagnostics_boot(void);
 
 /*
  * AdministratorCommissioning. This is what Apple Home's "Turn On Pairing Mode"

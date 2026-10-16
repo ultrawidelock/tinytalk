@@ -34,6 +34,8 @@ extern "C" {
 #define TM_KV_KEY_MATTER_LIMIT 0x2100u
 
 #define TM_KV_KEY_MATTER_SRP_HOST_ID 0x2000u
+/* General Diagnostics RebootCount, a uint16_t. */
+#define TM_KV_KEY_MATTER_REBOOT_COUNT 0x2001u
 
 #define TM_KV_KEY_MATTER_SUB_SLOT0      0x2040u
 #define TM_KV_KEY_MATTER_SUB_SLOT_LIMIT 0x2050u

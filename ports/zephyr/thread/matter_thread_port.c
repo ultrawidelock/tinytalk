@@ -28,6 +28,8 @@ LOG_MODULE_REGISTER(matter_thread, CONFIG_TINYTALK_THREAD_LOG_LEVEL);
 
 #include <openthread.h>
 #include <openthread/dataset.h>
+#include <openthread/ip6.h>
+#include <openthread/link.h>
 #include <openthread/srp_client.h>
 #include <openthread/thread.h>
 #include <openthread/udp.h>
@@ -246,6 +248,31 @@ bool matter_thread_attached_to(const uint8_t *xpanid)
 	}
 	LOG_INF("already attached to the commissioner's Thread network; not restarting");
 	return true;
+}
+
+int matter_thread_interface(struct matter_thread_iface *out)
+{
+	otInstance *ot = openthread_get_default_instance();
+	const otNetifAddress *addr;
+	otDeviceRole role;
+
+	memset(out, 0, sizeof(*out));
+	if (ot == NULL) {
+		return MATTER_E_STATE;
+	}
+	/* Node lock, then OpenThread's: the order every node call into the
+	 * port takes. */
+	openthread_mutex_lock();
+	role = otThreadGetDeviceRole(ot);
+	out->attached = role == OT_DEVICE_ROLE_CHILD || role == OT_DEVICE_ROLE_ROUTER ||
+			role == OT_DEVICE_ROLE_LEADER;
+	memcpy(out->ext_addr, otLinkGetExtendedAddress(ot)->m8, sizeof(out->ext_addr));
+	for (addr = otIp6GetUnicastAddresses(ot);
+	     addr != NULL && out->n_addrs < MATTER_THREAD_IFACE_ADDRS_MAX; addr = addr->mNext) {
+		memcpy(out->addrs[out->n_addrs++], addr->mAddress.mFields.m8, 16u);
+	}
+	openthread_mutex_unlock();
+	return MATTER_OK;
 }
 
 /**

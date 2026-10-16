@@ -15,6 +15,7 @@ matter_thread_advertise
 matter_thread_advertise_commissionable
 matter_thread_attached_to
 matter_thread_clear
+matter_thread_interface
 matter_thread_peer_current
 matter_thread_send_to
 matter_thread_start

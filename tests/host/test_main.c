@@ -48,6 +48,7 @@ int main(void)
 		{ "matter_clusters", test_matter_clusters },
 		{ "matter_commission", test_matter_commission },
 		{ "tm_app", test_tm_app },
+		{ "root_clusters", test_root_clusters },
 #if defined(SPAKEFAKE_PASSTHROUGH)
 		{ "spake2p_mbedtls", test_spake2p_mbedtls },
 #endif

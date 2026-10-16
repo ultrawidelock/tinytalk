@@ -13,6 +13,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <tinytalk/matter_thread.h>
+
 /** The dataset the last matter_thread_start() was handed. */
 extern uint8_t g_thread_last_dataset[512];
 extern size_t g_thread_last_len;
@@ -42,6 +44,8 @@ extern int g_thread_advertise_calls;
 /** matter_thread_unadvertise() calls, and the last name withdrawn. */
 extern int g_thread_unadvertise_calls;
 extern char g_thread_last_unadvertised[64];
+/** What matter_thread_interface() reports; zeroed by the reset. */
+extern struct matter_thread_iface g_thread_iface;
 
 void test_matter_thread_stub_reset(void);
 

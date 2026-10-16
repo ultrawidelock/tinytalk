@@ -25,6 +25,7 @@ if(CONFIG_TINYTALK)
     ${SRC}/matter_fabric.c
     ${SRC}/matter_case.c
     ${SRC}/matter_commission.c
+    ${SRC}/matter_diagnostics.c
     ${SRC}/matter_fab_store.c
     ${SRC}/tm_hash.c)
 

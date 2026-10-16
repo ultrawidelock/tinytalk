@@ -720,15 +720,17 @@ void test_matter_im(void)
 			m = walk_report(big, len, sreps, &suppress, &revision);
 			T_OK("and reported the endpoint's attributes", m > 0);
 			/*
-			 * The whole data model in one message, which is what a
-			 * controller subscribes to. It has to fit the report
-			 * buffer the port hands this encoder
-			 * (MATTER_REPORT_MAX in matter_commission.c) or the
-			 * node answers NOSPACE and sends nothing -- so this
-			 * fails HERE, on the host, rather than as a
-			 * subscription that silently never reports.
+			 * The root's model no longer fits one message: General
+			 * Diagnostics took it past the port's report buffer
+			 * (1,406 B against 1,180 B, 2026-10-17). Reads and
+			 * subscription priming both go out chunked
+			 * (send_read_chunk() and send_report_chunk() in
+			 * matter_commission.c), and the full-wildcard chunk walk
+			 * below proves every report arrives. What must not
+			 * happen is an UNCHUNKED wildcard, and the only unchunked
+			 * encode left carries concrete changed paths.
 			 */
-			T_OK("fits the port's report buffer", len <= PORT_REPORT_MAX);
+			T_OK("needs the chunked path too", len > PORT_REPORT_MAX);
 
 			/*
 			 * And now the report a controller ACTUALLY subscribes
