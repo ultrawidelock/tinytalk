@@ -107,7 +107,25 @@ static void on_recycled(void)
 	k_work_submit(&s_adv_work);
 }
 
+/* Every link, not only the one that writes C1: a peer that connects and never
+ * writes shows up nowhere else. */
+static void on_connected(struct bt_conn *conn, uint8_t err)
+{
+	char addr[BT_ADDR_LE_STR_LEN];
+
+	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+	LOG_INF("BLE connected: %s (err 0x%02x)", addr, err);
+}
+
+static void on_disconnected(struct bt_conn *conn, uint8_t reason)
+{
+	ARG_UNUSED(conn);
+	LOG_INF("BLE disconnected (0x%02x)", reason);
+}
+
 BT_CONN_CB_DEFINE(s_conn_cb) = {
+	.connected = on_connected,
+	.disconnected = on_disconnected,
 	.recycled = on_recycled,
 };
 
@@ -122,7 +140,9 @@ void tm_door_lock_actuate(uint8_t lock_state)
 /* ---- the button --------------------------------------------------------------- */
 
 static struct gpio_callback s_button_cb;
-static int64_t s_pressed_at;
+/* -1 until this boot sees a press: the press held through a factory-reset
+ * reboot ends here as a bare release, which is not a short press. */
+static int64_t s_pressed_at = -1;
 
 static void factory_reset_fn(struct k_work *work)
 {
@@ -158,9 +178,10 @@ static void on_button(const struct device *dev, struct gpio_callback *cb, uint32
 		return;
 	}
 	(void)k_work_cancel_delayable(&s_factory_reset_work);
-	if (k_uptime_get() - s_pressed_at < FACTORY_RESET_MS) {
+	if (s_pressed_at >= 0 && k_uptime_get() - s_pressed_at < FACTORY_RESET_MS) {
 		k_work_submit(&s_open_window_work);
 	}
+	s_pressed_at = -1;
 }
 
 static int button_init(void)
