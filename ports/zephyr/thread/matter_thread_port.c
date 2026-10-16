@@ -86,9 +86,8 @@ static int attach_callback_ensure(void)
  * asks for a name nobody owns. The orphaned registration is left to expire on
  * its own: it costs a record on somebody else's server and nothing here.
  *
- * It is NOT under a tree the factory reset clears, so holding SW2 through
- * reset keeps the name it already published -- the key survives that too, so
- * there is nothing to dodge.
+ * A factory reset that clears all of settings takes the key and this value
+ * together.
  */
 #define SRP_HOST_ID_KEY "srp/hid"
 
@@ -103,6 +102,18 @@ static int attach_callback_ensure(void)
  * above is what PREVENTS a collision, this only shortens one.
  */
 #define SRP_KEY_LEASE_S 3600u
+
+/**
+ * The commissionable record's lease, shorter than the 2-hour default.
+ *
+ * It is the one record whose ghost strands a commissioner: a node that loses
+ * power, crashes or is reflashed with a window open leaves it on the border
+ * router, and Apple Home tries PASE over Thread to the vanished node instead of
+ * using BLE, stuck at "Connecting" (2026-10-16). Two minutes bounds that.
+ * OpenThread renews a lease under 240 s at half its length, so an open window
+ * costs one SRP update a minute. A request, like the key lease.
+ */
+#define SRP_COMM_LEASE_S 120u
 
 int matter_thread_start(const uint8_t *dataset, size_t len)
 {
@@ -1045,6 +1056,7 @@ static int srp_register_commissionable_locked(otInstance *ot)
 	s_comm_service.mPort = s_wanted_comm.port;
 	s_comm_service.mTxtEntries = s_comm_txt;
 	s_comm_service.mNumTxtEntries = 5u;
+	s_comm_service.mLease = SRP_COMM_LEASE_S;
 
 	err = srp_host_register(ot);
 	if (err == OT_ERROR_NONE) {
