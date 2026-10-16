@@ -43,6 +43,64 @@ config TINYTALK_DOOR_LOCK
 	  LockOperation event. The application provides
 	  tm_door_lock_actuate(). See include/tinytalk/tm_door_lock.h.
 
+config TINYTALK_EVENTS
+	bool "Interaction Model events (the LockOperation event)"
+	depends on TINYTALK
+	default y
+	help
+	  Record events (tm_event_emit()) and report them to reads and
+	  subscriptions that ask. With this off tm_event_emit() records
+	  nothing, EventRequests and EventFilters are read past like any
+	  unknown field, and no report carries an EventReports array.
+
+	  Saves 2,016 B of flash and 1,088 B of RAM
+	  (decawave_dwm3001cdk, samples/door-lock, LTO on, measured
+	  2026-10-16).
+
+	  Risk: Apple Home subscribes to Door Lock events, and the Door Lock
+	  cluster spec makes LockOperation mandatory. A controller that asks
+	  for events is answered with none, as if nothing had happened. Off is
+	  untested on hardware.
+
+config TINYTALK_ADMIN_COMMANDS
+	bool "AdministratorCommissioning commands (OpenCommissioningWindow)"
+	depends on TINYTALK
+	default y
+	help
+	  Let a controller open a commissioning window: OpenCommissioningWindow
+	  with its own verifier, OpenBasicCommissioningWindow and
+	  RevokeCommissioning. With this off the cluster and its attributes
+	  stay, all three commands answer UNSUPPORTED_COMMAND, and only
+	  matter_commission_open_window() (a local gesture) opens a window.
+
+	  Saves 528 B of flash and no RAM
+	  (decawave_dwm3001cdk, samples/door-lock, LTO on, measured
+	  2026-10-16).
+
+	  Risk: OpenCommissioningWindow is mandatory in the cluster, which is
+	  mandatory on the Root Node, and it is how one ecosystem shares the
+	  lock with another (Apple Home "Turn On Pairing Mode"). Off is
+	  untested on hardware.
+
+config TINYTALK_SUB_RESUME
+	bool "Keep subscriptions across a reboot"
+	depends on TINYTALK
+	default y
+	help
+	  Store each subscription in tm_kv and rebind it to the controller's
+	  next CASE session after a reboot (see sub_resume_for() in
+	  src/matter_commission.c). With this off a reboot ends every
+	  subscription and nothing is stored.
+
+	  Saves 996 B of flash and 128 B of RAM
+	  (decawave_dwm3001cdk, samples/door-lock, LTO on, measured
+	  2026-10-16).
+
+	  Risk: a controller does not re-subscribe until its own liveness
+	  timer expires. Measured 2026-08-02 without it: after every reboot the
+	  Apple Home tile sat on "Unlocking" for minutes. Off is untested on
+	  hardware in this tree.
+
 # ---- the Zephyr port (ports/zephyr) ------------------------------------------
 
 if TINYTALK

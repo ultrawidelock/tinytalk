@@ -225,6 +225,7 @@ static uint8_t lock_invoke(const struct tm_req *req, uint32_t cmd, const uint8_t
 	return MATTER_IM_STATUS_SUCCESS;
 }
 
+#ifndef TM_NO_EVENTS
 /*
  * The LockOperation fields.
  *
@@ -268,6 +269,7 @@ static void lock_event(const struct tm_req *req, uint32_t event, const uint8_t *
 	}
 	(void)matter_tlv_end_container(w);
 }
+#endif
 
 /*
  * Stored values survive fabric removal: the bolt does not move when a
@@ -379,7 +381,9 @@ const struct tm_cluster tm_door_lock = {
 	.read = lock_read,
 	.write = lock_write,
 	.invoke = lock_invoke,
+#ifndef TM_NO_EVENTS
 	.event = lock_event,
+#endif
 	.init = lock_init,
 	.changed = lock_changed,
 };

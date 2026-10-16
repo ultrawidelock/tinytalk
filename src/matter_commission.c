@@ -393,6 +393,7 @@ static void admin_arm(uint16_t timeout_s, uint8_t kind)
 		(unsigned)kind);
 }
 
+#ifndef TM_NO_ADMIN_COMMANDS
 /**
  * Open the Matter commissioning window with an enhanced PAKE verifier, new discriminator, and the
  * specified timeout in seconds. Validates verifier length, point format (0x04 prefix), salt length,
@@ -429,6 +430,7 @@ static uint8_t admin_open_enhanced(uint16_t timeout_s, const uint8_t *verifier,
 	admin_arm(timeout_s, MATTER_ADMIN_WINDOW_ENHANCED);
 	return 0u;
 }
+#endif
 
 /**
  * Open the Matter commissioning window with the factory PAKE verifier and the specified timeout in
@@ -446,6 +448,7 @@ static uint8_t admin_open_basic(uint16_t timeout_s)
 	return 0u;
 }
 
+#ifndef TM_NO_ADMIN_COMMANDS
 /**
  * Close the Matter commissioning window if one is open. Returns MATTER_ADMIN_STATUS_WINDOW_NOT_OPEN
  * if already closed, otherwise returns 0u.
@@ -459,6 +462,7 @@ static uint8_t admin_revoke(void)
 	admin_close();
 	return 0u;
 }
+#endif
 
 /**
  * Return the administrative window state: one of the MATTER_ADMIN_WINDOW_* constants.
@@ -502,9 +506,11 @@ static uint16_t admin_vendor(void)
 }
 
 static const struct matter_admin_hooks k_admin_hooks = {
+#ifndef TM_NO_ADMIN_COMMANDS
 	.open_enhanced = admin_open_enhanced,
 	.open_basic = admin_open_basic,
 	.revoke = admin_revoke,
+#endif
 	.status = admin_status,
 	.admin_fabric = admin_fabric,
 	.admin_vendor = admin_vendor,
@@ -1491,6 +1497,7 @@ struct sub_state {
 	uint16_t session_id;
 	/** Reports already delivered by earlier chunks of the priming report. */
 	uint16_t sent;
+#ifndef TM_NO_EVENTS
 	/**
 	 * The lowest EventNumber this subscriber has NOT been sent.
 	 *
@@ -1500,6 +1507,7 @@ struct sub_state {
 	 * subscription asks for events.
 	 */
 	uint64_t event_min;
+#endif
 	/** More chunks remain; the next StatusResponse asks for one. */
 	bool more;
 	/* Between the priming report and the StatusResponse that confirms it. */
@@ -1554,6 +1562,7 @@ static uint8_t s_sub_next_victim;
  * subscription replaces the rebound one and nothing is reported twice.
  */
 
+#ifndef TM_NO_SUB_RESUME
 /**
  * Persisted subscription state: peer node ID, subscription ID, maximum heartbeat interval in
  * seconds, fabric index, and a used flag.
@@ -1571,6 +1580,7 @@ static struct sub_persist s_dormant[MATTER_CASE_SESSIONS];
 _Static_assert(TM_KV_KEY_MATTER_SUB_SLOT0 + MATTER_CASE_SESSIONS <=
 		       TM_KV_KEY_MATTER_SUB_SLOT_LIMIT,
 	       "one storage key per CASE session");
+#endif
 
 /*
  * Subscription ids, and why this is not a local static.
@@ -1584,6 +1594,7 @@ _Static_assert(TM_KV_KEY_MATTER_SUB_SLOT0 + MATTER_CASE_SESSIONS <=
  */
 static uint32_t s_sub_next_id;
 
+#ifndef TM_NO_SUB_RESUME
 /**
  * Persist one subscription's state under TM_KV_KEY_MATTER_SUB_SLOT0 + slot. Skip
  * persisting if peer_node or fabric_index is zero (no match key available). Log a warning if save
@@ -1720,6 +1731,30 @@ static void sub_resume_for(uint8_t case_slot, uint64_t peer_node, uint8_t fabric
 		(unsigned int)s->id, (unsigned int)session_id);
 	subscription_heartbeat_arm();
 }
+#else
+/* CONFIG_TINYTALK_SUB_RESUME=n: a reboot ends every subscription. */
+static void sub_persist_save(uint8_t slot, const struct sub_state *s, uint64_t peer_node,
+			     uint8_t fabric_index)
+{
+	(void)slot;
+	(void)s;
+	(void)peer_node;
+	(void)fabric_index;
+}
+
+static void sub_persist_load(void)
+{
+}
+
+static void sub_resume_for(uint8_t case_slot, uint64_t peer_node, uint8_t fabric_index,
+			   uint16_t session_id)
+{
+	(void)case_slot;
+	(void)peer_node;
+	(void)fabric_index;
+	(void)session_id;
+}
+#endif
 
 /*
  * There is deliberately no erase for these at a factory reset, and that is safe
@@ -1832,7 +1867,7 @@ static void notify_one(struct sub_state *s, const uint32_t *changes)
 	size_t framed = 0u;
 	uint16_t session_id;
 	uint32_t subscription_id;
-	bool events;
+	bool events = false;
 	int rc;
 
 	if (!s->in_use || !s->active || s->session_id == 0u || !s->peer.valid) {
@@ -1859,6 +1894,7 @@ static void notify_one(struct sub_state *s, const uint32_t *changes)
 	 * answer to a read the peer never sent. */
 	one.subscription_id = s->id;
 
+#ifndef TM_NO_EVENTS
 	/*
 	 * The events this subscriber has not been sent, carried by the same
 	 * report as the attribute. A subscriber that asked for no events gets
@@ -1873,6 +1909,7 @@ static void notify_one(struct sub_state *s, const uint32_t *changes)
 		memcpy(one.event_paths, s->read.event_paths, sizeof(one.event_paths));
 		one.event_min = s->event_min;
 	}
+#endif
 	/* A change this subscriber does not cover is not news to it. */
 	if (changes != NULL && one.n_paths == 0u && !events) {
 		return;
@@ -1895,10 +1932,15 @@ static void notify_one(struct sub_state *s, const uint32_t *changes)
 	 * the send would drop an unlock on a failed transmit, and the subscriber
 	 * has no way to ask for an event it was never told existed.
 	 */
+#ifndef TM_NO_EVENTS
 	if (rc == MATTER_OK && s->in_use && s->session_id == session_id &&
 	    s->id == subscription_id && s->read.n_event_paths > 0u) {
 		s->event_min = s_info.next_event_number + 1u;
 	}
+#else
+	(void)session_id;
+	(void)subscription_id;
+#endif
 }
 
 /**
@@ -2058,6 +2100,7 @@ static void subscription_heartbeat_arm(void)
 	(void)tm_work_schedule(TM_WORK_HEARTBEAT, subscription_heartbeat_period_s() * 1000u);
 }
 
+#ifndef TM_NO_EVENTS
 /** The clock an event's SystemTimestamp is taken from. */
 static uint64_t matter_event_uptime_ms(void)
 {
@@ -2065,6 +2108,7 @@ static uint64_t matter_event_uptime_ms(void)
 
 	return ms > 0 ? (uint64_t)ms : 0u;
 }
+#endif
 
 /** The session serving the datagram in flight; 0 when it arrived over BLE. */
 static uint16_t current_session_id(void)
@@ -2299,7 +2343,9 @@ static void sub_drop_session(uint16_t session_id)
 /** Revoke every live and persisted session resource owned by one removed fabric. */
 static void case_drop_fabric(uint8_t fabric_index)
 {
+#ifndef TM_NO_SUB_RESUME
 	struct sub_persist tombstone = {0};
+#endif
 
 	for (uint8_t i = 0u; i < MATTER_CASE_SESSIONS; i++) {
 		if (s_case_ready[i] && s_case_fabric[i] == fabric_index) {
@@ -2310,6 +2356,7 @@ static void case_drop_fabric(uint8_t fabric_index)
 			s_case_ready[i] = false;
 			s_case_fabric[i] = 0u;
 		}
+#ifndef TM_NO_SUB_RESUME
 		if (!s_dormant[i].used || s_dormant[i].fabric_index != fabric_index) {
 			continue;
 		}
@@ -2319,6 +2366,7 @@ static void case_drop_fabric(uint8_t fabric_index)
 			TM_LOG_WRN("  removed fabric %u subscription tombstone not persisted",
 				(unsigned int)fabric_index);
 		}
+#endif
 	}
 	matter_commission_readvertise();
 }
@@ -2606,7 +2654,9 @@ static void on_status_response(const struct matter_exchange_in *in)
 		 */
 		if (s != NULL && !in->initiator) {
 			s->in_use = false;
+#ifndef TM_NO_SUB_RESUME
 			s_dormant[s - s_subs].used = 0u;
+#endif
 		}
 		return;
 	}
@@ -3837,9 +3887,11 @@ int matter_commission_init(const struct matter_commission_config *cfg)
 	 * point, a node that hides it can never be shared with a second
 	 * ecosystem -- but every command answers FAILURE. */
 	matter_clusters_set_admin_hooks(&k_admin_hooks);
+#ifndef TM_NO_EVENTS
 	/* An event's SystemTimestamp. Milliseconds since boot, which is what the
 	 * node can honestly claim -- it has no trusted wall clock. */
 	s_info.uptime_ms_cb = matter_event_uptime_ms;
+#endif
 	/*
 	 * Unconditional, unlike the subscriptions below: these are attribute
 	 * values, and a stored value is right even on a node whose fabric did

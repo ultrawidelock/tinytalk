@@ -1815,10 +1815,12 @@ void matter_clusters_set_admin_hooks(const struct matter_admin_hooks *hooks)
  * failure. Worth fixing when something depends on the distinction; nothing
  * here does, because the only caller that matters retries either way.
  */
+#ifndef TM_NO_ADMIN_COMMANDS
 static uint8_t admin_status(uint8_t cluster_status)
 {
 	return cluster_status == 0u ? MATTER_IM_STATUS_SUCCESS : MATTER_IM_STATUS_FAILURE;
 }
+#endif
 
 /**
  * Decode and dispatch an admin cluster command: open-enhanced-window, open-basic-window, or revoke.
@@ -1827,6 +1829,13 @@ static uint8_t admin_status(uint8_t cluster_status)
  */
 static uint8_t admin_command(const struct matter_im_invoke *inv, uint32_t *response_command)
 {
+#ifdef TM_NO_ADMIN_COMMANDS
+	/* CONFIG_TINYTALK_ADMIN_COMMANDS=n: the cluster and its attributes stay,
+	 * and only a local gesture opens a window. */
+	(void)inv;
+	*response_command = MATTER_IM_NO_RESPONSE;
+	return MATTER_IM_STATUS_UNSUPPORTED_COMMAND;
+#else
 	const uint8_t *verifier = NULL;
 	const uint8_t *salt = NULL;
 	size_t verifier_len = 0;
@@ -1882,6 +1891,7 @@ static uint8_t admin_command(const struct matter_im_invoke *inv, uint32_t *respo
 	default:
 		return MATTER_IM_STATUS_UNSUPPORTED_COMMAND;
 	}
+#endif
 }
 
 static uint8_t network_command(struct matter_device_info *info, const struct matter_im_invoke *inv,
@@ -2914,6 +2924,26 @@ static uint8_t attr_write(void *ctx, const struct matter_im_path *path, const ui
 
 /* ---- events ---------------------------------------------------------------- */
 
+#ifdef TM_NO_EVENTS
+/* CONFIG_TINYTALK_EVENTS=n: nothing is recorded, and no event number exists. */
+uint64_t tm_event_emit(uint16_t endpoint, uint32_t cluster, uint32_t event, uint8_t priority,
+		       const void *blob, size_t len)
+{
+	(void)endpoint;
+	(void)cluster;
+	(void)event;
+	(void)priority;
+	(void)blob;
+	(void)len;
+	return 0u;
+}
+
+size_t matter_clusters_event_count(const struct matter_device_info *info)
+{
+	(void)info;
+	return 0u;
+}
+#else
 uint64_t tm_event_emit(uint16_t endpoint, uint32_t cluster, uint32_t event, uint8_t priority,
 		       const void *blob, size_t len)
 {
@@ -2999,6 +3029,7 @@ static void event_data(void *ctx, size_t index, struct matter_tlv_writer *w, mat
 	app_req(info, ev->endpoint, false, &req);
 	c->event(&req, ev->event, ev->blob, w, tag);
 }
+#endif /* TM_NO_EVENTS */
 
 /**
  * Register this device's attribute, cluster, and command handlers with a Matter IM server.
@@ -3019,9 +3050,11 @@ void matter_clusters_init(struct matter_im_server *srv, struct matter_device_inf
 	srv->command = command;
 	srv->command_fields = command_fields;
 	srv->write = attr_write;
+#ifndef TM_NO_EVENTS
 	srv->event_count = event_count;
 	srv->event_at = event_at;
 	srv->event_data = event_data;
+#endif
 	srv->ctx = info;
 	s_dm = info;
 }

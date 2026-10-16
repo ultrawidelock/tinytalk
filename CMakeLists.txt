@@ -30,6 +30,18 @@ if(CONFIG_TINYTALK)
 
   zephyr_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+  # Feature switches. Global, because they change struct layouts in the
+  # public headers.
+  if(NOT CONFIG_TINYTALK_EVENTS)
+    zephyr_compile_definitions(TM_NO_EVENTS)
+  endif()
+  if(NOT CONFIG_TINYTALK_ADMIN_COMMANDS)
+    zephyr_compile_definitions(TM_NO_ADMIN_COMMANDS)
+  endif()
+  if(NOT CONFIG_TINYTALK_SUB_RESUME)
+    zephyr_compile_definitions(TM_NO_SUB_RESUME)
+  endif()
+
   # Cluster modules an application puts on its endpoints (tm_app.h).
   if(CONFIG_TINYTALK_DOOR_LOCK)
     zephyr_library_sources(${CMAKE_CURRENT_SOURCE_DIR}/clusters/door_lock/tm_door_lock.c)

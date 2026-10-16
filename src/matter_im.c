@@ -279,6 +279,7 @@ static int decode_path(struct matter_tlv_reader *r, struct matter_im_path *p)
 	return matter_tlv_exit(r);
 }
 
+#ifndef TM_NO_EVENTS
 /** Decode one EventPathIB. The reader is positioned ON the list element. */
 static int decode_event_path(struct matter_tlv_reader *r, struct matter_im_event_path *p)
 {
@@ -435,6 +436,7 @@ static int decode_event_filters(struct matter_tlv_reader *r, struct matter_im_re
 	}
 	return matter_tlv_exit(r);
 }
+#endif /* TM_NO_EVENTS */
 
 /**
  * Decode a Matter read request message from TLV to extract attribute paths and filter settings.
@@ -508,6 +510,7 @@ int matter_im_read_request_decode(const uint8_t *tlv, size_t len, struct matter_
 			if (rc != MATTER_OK) {
 				return rc;
 			}
+#ifndef TM_NO_EVENTS
 		} else if (matter_tlv_tag(&r) == MATTER_TLV_CTX(TAG_READ_EVENT_PATHS)) {
 			rc = decode_event_paths(&r, out);
 			if (rc != MATTER_OK) {
@@ -518,6 +521,7 @@ int matter_im_read_request_decode(const uint8_t *tlv, size_t len, struct matter_
 			if (rc != MATTER_OK) {
 				return rc;
 			}
+#endif
 		} else if (matter_tlv_tag(&r) == MATTER_TLV_CTX(TAG_READ_FABRIC_FILTERED)) {
 			rc = matter_tlv_get_bool(&r, &out->fabric_filtered);
 			if (rc != MATTER_OK) {
@@ -793,6 +797,7 @@ static void expand_on_endpoint(struct matter_tlv_writer *w, const struct matter_
 	}
 }
 
+#ifndef TM_NO_EVENTS
 /** Does @p ev fall under any of the request's event paths? */
 static bool event_wanted(const struct matter_im_read *req, const struct matter_im_event *ev)
 {
@@ -914,6 +919,7 @@ static void put_event_reports(struct matter_tlv_writer *w, const struct matter_i
 	}
 	(void)matter_tlv_end_container(w);
 }
+#endif /* TM_NO_EVENTS */
 
 int matter_im_report_data_chunk(const struct matter_im_server *srv,
 				const struct matter_im_read *req, uint16_t sent, uint8_t *out,
@@ -1059,7 +1065,9 @@ static int report_encode(const struct matter_im_server *srv, const struct matter
 	if (req->n_paths > 0u) {
 		(void)matter_tlv_end_container(&w);
 	}
+#ifndef TM_NO_EVENTS
 	put_event_reports(&w, srv, req, cc);
+#endif
 	/*
 	 * More follows. The peer answers a chunk with a StatusResponse and waits
 	 * for the rest; omitting this on a report that WAS cut short is how a
@@ -1931,6 +1939,7 @@ int matter_im_subscribe_request_decode(const uint8_t *tlv, size_t len,
 			if (rc != MATTER_OK) {
 				return rc;
 			}
+#ifndef TM_NO_EVENTS
 		} else if (matter_tlv_tag(&r) == MATTER_TLV_CTX(TAG_SUB_EVENT_REQUESTS)) {
 			rc = decode_event_paths(&r, &out->read);
 			if (rc != MATTER_OK) {
@@ -1941,6 +1950,7 @@ int matter_im_subscribe_request_decode(const uint8_t *tlv, size_t len,
 			if (rc != MATTER_OK) {
 				return rc;
 			}
+#endif
 		} else if (matter_tlv_tag(&r) == MATTER_TLV_CTX(TAG_SUB_MIN_INTERVAL)) {
 			if (matter_tlv_get_u64(&r, &v) == MATTER_OK && v <= UINT16_MAX) {
 				out->min_interval_s = (uint16_t)v;

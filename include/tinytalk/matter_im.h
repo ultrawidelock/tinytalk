@@ -166,6 +166,7 @@ struct matter_im_event_path {
 struct matter_im_read {
 	struct matter_im_path paths[MATTER_IM_MAX_PATHS];
 	uint8_t n_paths;
+#ifndef TM_NO_EVENTS
 	/**
 	 * The events asked for, if any. A request carrying none gets an empty
 	 * EventReports array -- not every event this node happens to hold.
@@ -179,6 +180,7 @@ struct matter_im_read {
 	 * twice. Zero asks for everything held.
 	 */
 	uint64_t event_min;
+#endif
 	/** As sent; recorded rather than acted on, since nothing here is fabric-scoped yet. */
 	bool fabric_filtered;
 	/**

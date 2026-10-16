@@ -376,6 +376,7 @@ struct matter_device_info {
 	const char *software_version_str;
 	/** Stable, per-device serial supplied by the hardware port. */
 	char serial_number[MATTER_SERIAL_NUMBER_MAX + 1u];
+#ifndef TM_NO_EVENTS
 	/**
 	 * The events waiting to be reported, oldest first.
 	 *
@@ -399,6 +400,7 @@ struct matter_device_info {
 	 * which is legal and useless rather than wrong.
 	 */
 	uint64_t (*uptime_ms_cb)(void);
+#endif
 	/**
 	 * The fabric index of the session being served right now, set by the
 	 * port before it dispatches each secure message.
