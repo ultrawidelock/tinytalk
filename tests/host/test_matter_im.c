@@ -2366,4 +2366,31 @@ void test_matter_im_events(void)
 		T_OK("SubscriptionId 1 and revision 12, nothing else",
 		     len == (size_t)n && memcmp(out, want, len) == 0);
 	}
+
+	/*
+	 * The heartbeat a subscription covering the lock actually gets: LockState
+	 * re-reported, so the controller sees an attribute callback every 120 s
+	 * (see notify_one() in src/matter_commission.c). No event is new, so
+	 * there is no EventReports array.
+	 */
+	t_group("the LockState heartbeat");
+	{
+		fill_info(&info);
+		matter_clusters_init(&srv, &info);
+		one_event_path(&req);
+		req.subscription_id = 1u;
+		req.n_paths = 1u;
+		req.paths[0].endpoint = MATTER_ENDPOINT_LOCK;
+		req.paths[0].have_endpoint = true;
+		req.paths[0].cluster = MATTER_CLUSTER_DOOR_LOCK;
+		req.paths[0].have_cluster = true;
+		req.paths[0].attribute = MATTER_ATTR_DL_LOCK_STATE;
+		req.paths[0].have_attribute = true;
+		T_EQ("it encodes",
+		     matter_im_report_data_encode(&srv, &req, out, sizeof(out), &len, NULL),
+		     MATTER_OK);
+		T_EQ("with no event reports", count_event_reports(out, len, NULL, NULL), 0);
+		/* 65 B on the air with the 30 B of headers and tag. */
+		T_EQ("in 35 B", (long)len, 35L);
+	}
 }

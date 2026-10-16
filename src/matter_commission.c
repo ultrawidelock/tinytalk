@@ -1857,9 +1857,8 @@ static bool path_covers(const struct matter_im_path *p, const struct matter_im_p
 
 /**
  * Report to one subscriber: the changed attributes it covers, then the events
- * it has not been sent. @p changes NULL is the heartbeat, which carries no
- * attribute and is sent even empty, because an empty report is what keeps a
- * subscription alive.
+ * it has not been sent. @p changes NULL is the heartbeat, which is sent even
+ * when nothing changed, because a report is what keeps a subscription alive.
  */
 static void notify_one(struct sub_state *s, const uint32_t *changes)
 {
@@ -1894,6 +1893,37 @@ static void notify_one(struct sub_state *s, const uint32_t *changes)
 			want = path_covers(&s->read.paths[i], &c);
 		}
 		if (want && one.n_paths < MATTER_IM_MAX_PATHS) {
+			one.paths[one.n_paths++] = c;
+		}
+	}
+	/*
+	 * The heartbeat re-reports ONE attribute rather than nothing: the first
+	 * application attribute, in endpoint table order, that the subscription
+	 * covers, global attributes (0xF000 and up) skipped because they never
+	 * change. For the door-lock's wildcard that is endpoint 1 Door Lock
+	 * LockState. Apple's MTRDevice refreshes its subscription-active time
+	 * only on attribute, event or report-begin callbacks, which an empty
+	 * report never triggers, and both of Apple's controllers stopped sending
+	 * after the first empty keep-alive (tinylock round 1, 2026-10-17). UWL,
+	 * which works on the same hub, reports LockState on every heartbeat. A
+	 * subscription that covers no application attribute still gets the
+	 * empty keep-alive.
+	 */
+	for (size_t bit = 0u; changes == NULL && one.n_paths == 0u && bit < TM_ATTRS_MAX; bit++) {
+		struct matter_im_path c;
+		const struct tm_cluster *cl;
+		bool want = s->resumed;
+
+		if (!matter_clusters_change_path(bit, &c, &cl)) {
+			break;
+		}
+		if (c.attribute >= 0xF000u) {
+			continue;
+		}
+		for (uint8_t i = 0u; !want && i < s->read.n_paths; i++) {
+			want = path_covers(&s->read.paths[i], &c);
+		}
+		if (want) {
 			one.paths[one.n_paths++] = c;
 		}
 	}
