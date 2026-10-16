@@ -125,10 +125,15 @@ what to build:
 | Option | What it adds |
 |---|---|
 | `CONFIG_TINYTALK` | the node, the platform port and storage on settings |
-| `CONFIG_TINYTALK_BLE` | BLE commissioning (0xFFF6, BTP); without it the application provides `matter_ble.h` |
-| `CONFIG_TINYTALK_THREAD` | Matter over Thread (OpenThread, SRP, UDP 5540); without it the application provides `matter_thread.h` |
+| `CONFIG_TINYTALK_BLE` | BLE commissioning (0xFFF6, BTP) on the Zephyr Bluetooth host; without it another module provides `matter_ble.h` (tinyble's `CONFIG_TINYBLE_TINYTALK`) or the application does |
+| `CONFIG_TINYTALK_THREAD` | Matter over Thread (OpenThread, SRP, UDP 5540); without it another module provides `matter_thread.h` (tinygrid's `CONFIG_TINYGRID_MATTER`) or the application does |
 | `CONFIG_TINYTALK_DOOR_LOCK` | the Door Lock cluster module |
-| `CONFIG_TINYTALK_SPAKE2P_OBERON` or `_MBEDTLS` | the SPAKE2+ backend |
+| `CONFIG_TINYTALK_SPAKE2P_OBERON`, `_MBEDTLS` or `_TINYPSA` | the SPAKE2+ backend |
+
+`CONFIG_TINYTALK_HAS_BLE` and `CONFIG_TINYTALK_HAS_THREAD` are hidden: each
+provider of the seam selects one, this tree's two ports included, so an
+application tests the flag rather than a provider. PORTING.md ("Providing a
+transport from another module") has the contract.
 
 Pass the application's endpoint table to `matter_commission_init()`; PORTING.md
 ("Adding a cluster") covers writing a cluster.
