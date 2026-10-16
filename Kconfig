@@ -109,15 +109,29 @@ module = TINYTALK
 module-str = tinytalk
 source "subsys/logging/Kconfig.template.log_config"
 
+config TINYTALK_HAS_BLE
+	bool
+	help
+	  A matter_ble.h provider is linked.
+
+config TINYTALK_HAS_THREAD
+	bool
+	help
+	  A matter_thread.h provider is linked.
+
 config TINYTALK_BLE
 	bool "BLE commissioning: the 0xFFF6 service over BTP"
 	# The framing itself is in the core (src/) and has no Zephyr
 	# dependency; this brings in the Zephyr-side adapter that carries it.
 	depends on BT_PERIPHERAL
+	select TINYTALK_HAS_BLE
 	help
 	  Compile the 0xFFF6 service (C1 write, C2 indicate) and the BTP glue
 	  that turns it into a Matter message transport (matter_ble.h).
-	  Without it the application provides matter_ble.h itself.
+	  It is one provider of matter_ble.h, on the Zephyr Bluetooth host.
+	  Without it another module or the application provides matter_ble.h;
+	  a module that does selects TINYTALK_HAS_BLE and depends on
+	  !TINYTALK_BLE.
 
 	  It advertises when the application calls matter_ble_advertise().
 	  An application that owns the single advertising set asks this
@@ -127,11 +141,14 @@ config TINYTALK_BLE
 config TINYTALK_THREAD
 	bool "Matter over Thread: OpenThread, SRP and UDP 5540"
 	depends on OPENTHREAD
+	select TINYTALK_HAS_THREAD
 	help
 	  Compile the Thread transport (matter_thread.h): the node joins the
 	  Thread network a commissioner hands it, registers its operational
-	  service over SRP and carries Matter over UDP on port 5540. Without
-	  it the application provides matter_thread.h itself.
+	  service over SRP and carries Matter over UDP on port 5540. It is
+	  one provider of matter_thread.h, on OpenThread. Without it another
+	  module or the application provides matter_thread.h; a module that
+	  does selects TINYTALK_HAS_THREAD and depends on !TINYTALK_THREAD.
 
 config TINYTALK_DISCRIMINATOR
 	hex "Matter setup discriminator, 12-bit"
