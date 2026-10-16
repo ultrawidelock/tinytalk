@@ -68,6 +68,7 @@ void test_matter_clusters(void);
 void test_matter_commission(void);
 void test_tm_app(void);
 void test_root_clusters(void);
+void test_tm_identify(void);
 /* Only with the real curve; see the Makefile's SPAKE. */
 void test_spake2p_mbedtls(void);
 

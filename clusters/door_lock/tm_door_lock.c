@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include <tinytalk/matter_im.h>
+#include <tinytalk/tm_identify.h>
 #include <tinytalk/tm_kv.h>
 #include <tinytalk/tm_platform.h>
 
@@ -388,12 +389,22 @@ const struct tm_cluster tm_door_lock = {
 	.changed = lock_changed,
 };
 
-static const struct tm_cluster *const k_lock_clusters[] = { &tm_door_lock };
+/*
+ * The Door Lock device type requires an Identify server beside the Door Lock
+ * (matter-devices.xml, MA-doorlock). Door Lock stays first, so its attributes
+ * keep the first change bits and LockState stays the heartbeat's attribute.
+ */
+static const struct tm_cluster *const k_lock_clusters[] = {
+	&tm_door_lock,
+#ifndef TM_NO_IDENTIFY
+	&tm_identify,
+#endif
+};
 
 const struct tm_endpoint tm_door_lock_endpoint = {
 	.id = MATTER_ENDPOINT_LOCK,
 	.device_type = MATTER_DEVICE_TYPE_DOOR_LOCK,
 	.device_revision = MATTER_DEVICE_TYPE_LOCK_REV,
 	.clusters = k_lock_clusters,
-	.n_clusters = 1u,
+	.n_clusters = sizeof(k_lock_clusters) / sizeof(k_lock_clusters[0]),
 };

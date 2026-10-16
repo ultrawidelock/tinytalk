@@ -52,6 +52,21 @@ config TINYTALK_DOOR_LOCK
 	  LockOperation event. The application provides
 	  tm_door_lock_actuate(). See include/tinytalk/tm_door_lock.h.
 
+config TINYTALK_IDENTIFY
+	bool "Identify cluster module (clusters/identify)"
+	depends on TINYTALK
+	default y
+	help
+	  An Identify cluster for an application endpoint: IdentifyTime,
+	  IdentifyType, Identify and TriggerEffect. The Door Lock device
+	  type requires it, and tm_door_lock_endpoint lists it after the
+	  Door Lock while this is on. The application can install hooks with
+	  tm_identify_configure(); without them it reports IdentifyType None
+	  and identifies with nothing. See include/tinytalk/tm_identify.h.
+
+	  Costs 880 B of flash and no RAM (decawave_dwm3001cdk, tinylock's
+	  door-lock, LTO on, measured 2026-10-17).
+
 config TINYTALK_EVENTS
 	bool "Interaction Model events (the LockOperation event)"
 	depends on TINYTALK

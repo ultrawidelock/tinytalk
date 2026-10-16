@@ -70,7 +70,7 @@ include/tinytalk/     the node's headers; tm_platform.h, tm_kv.h, matter_ble.h,
                       matter_thread.h and the crypto headers are what a port provides;
                       tm_app.h is what an application adds
 src/                  the node, portable C11
-clusters/             cluster modules for application endpoints: door_lock/
+clusters/             cluster modules for application endpoints: door_lock/, identify/
 backends/             crypto: psa/ (P-256, AES, random), oberon/ and mbedtls/ (SPAKE2+)
 ports/zephyr/         platform, BLE transport, storage, Thread
 scripts/              SPAKE2+ verifier and pairing-code generator
@@ -128,6 +128,7 @@ what to build:
 | `CONFIG_TINYTALK_BLE` | BLE commissioning (0xFFF6, BTP) on the Zephyr Bluetooth host; without it another module provides `matter_ble.h` (tinyble's `CONFIG_TINYBLE_TINYTALK`) or the application does |
 | `CONFIG_TINYTALK_THREAD` | Matter over Thread (OpenThread, SRP, UDP 5540); without it another module provides `matter_thread.h` (tinygrid's `CONFIG_TINYGRID_MATTER`) or the application does |
 | `CONFIG_TINYTALK_DOOR_LOCK` | the Door Lock cluster module |
+| `CONFIG_TINYTALK_IDENTIFY` | the Identify cluster module, listed on the Door Lock endpoint; on by default |
 | `CONFIG_TINYTALK_SPAKE2P_OBERON`, `_MBEDTLS` or `_TINYPSA` | the SPAKE2+ backend |
 
 `CONFIG_TINYTALK_HAS_BLE` and `CONFIG_TINYTALK_HAS_THREAD` are hidden: each

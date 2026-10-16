@@ -48,6 +48,11 @@ if(CONFIG_TINYTALK)
   if(CONFIG_TINYTALK_DOOR_LOCK)
     zephyr_library_sources(${CMAKE_CURRENT_SOURCE_DIR}/clusters/door_lock/tm_door_lock.c)
   endif()
+  if(CONFIG_TINYTALK_IDENTIFY)
+    zephyr_library_sources(${CMAKE_CURRENT_SOURCE_DIR}/clusters/identify/tm_identify.c)
+  else()
+    zephyr_compile_definitions(TM_NO_IDENTIFY)
+  endif()
 
   # The core's logs, on Zephyr's logger (include/tinytalk/tm_log.h).
   zephyr_library_compile_definitions(TM_LOG_HEADER="tm_log_zephyr.h")
