@@ -12,8 +12,9 @@
  * C1 (RX, write) is 18EE2EF5-263D-4559-959F-4F9C429F9D11, C2 (TX, indicate)
  * ...D12, spelled below in the little-endian order BT_UUID_INIT_128 wants.
  *
- * It does not advertise: the application owns the advertising set and asks
- * this file for the commissionable payload.
+ * It advertises only when the application asks, through matter_ble_advertise().
+ * An application that owns the advertising set itself asks this file for the
+ * commissionable payload instead (matter_ble_zephyr.h).
  */
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/conn.h>
@@ -645,6 +646,7 @@ static bool claim_conn(struct bt_conn *conn)
  */
 static void on_disconnected(struct bt_conn *conn, uint8_t reason)
 {
+	LOG_INF("BLE disconnected (0x%02x)", (unsigned int)reason);
 	if (conn != s_conn) {
 		return;
 	}
@@ -654,8 +656,22 @@ static void on_disconnected(struct bt_conn *conn, uint8_t reason)
 	reset_link();
 }
 
+/* Every link, not only the one that writes C1: a peer that connects and never
+ * writes shows up nowhere else. */
+static void on_connected(struct bt_conn *conn, uint8_t err)
+{
+	char addr[BT_ADDR_LE_STR_LEN];
+
+	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+	LOG_INF("BLE connected: %s (err 0x%02x)", addr, (unsigned int)err);
+}
+
+static void on_recycled(void);
+
 BT_CONN_CB_DEFINE(matter_conn_cb) = {
+	.connected = on_connected,
 	.disconnected = on_disconnected,
+	.recycled = on_recycled,
 };
 
 /* ---- advertising --------------------------------------------------------- */
@@ -721,6 +737,70 @@ int matter_ble_commissionable_svc_data(uint8_t *out, size_t cap)
 	p[7] = 0x00u;
 
 	return 0;
+}
+
+int matter_ble_start(void)
+{
+	int rc = bt_enable(NULL);
+
+	return rc == -EALREADY ? 0 : rc;
+}
+
+/* bt_data holds a pointer to this, not a copy, so it outlives the advert. */
+static uint8_t s_svc_data[MATTER_BLE_SVC_DATA_LEN];
+/* What the application last asked for, and whether it ever asked: one that
+ * owns its own advert never calls matter_ble_advertise(), and its advert is
+ * left alone. */
+static bool s_adv_on;
+static bool s_adv_owned;
+
+int matter_ble_advertise(bool on)
+{
+	const struct bt_data ad[] = {
+		BT_DATA_BYTES(BT_DATA_FLAGS, BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR),
+		BT_DATA(BT_DATA_SVC_DATA16, s_svc_data, sizeof(s_svc_data)),
+	};
+	int pub;
+	int rc;
+
+	s_adv_on = on;
+	s_adv_owned = true;
+	/* The GATT table follows the advert: no commissioning service while the
+	 * node is not offering to be commissioned. -EBUSY means a link is up and
+	 * the next pass will try again. */
+	pub = matter_ble_publish(on);
+	(void)bt_le_adv_stop();
+	if (!on) {
+		return pub;
+	}
+	if (matter_ble_commissionable_svc_data(s_svc_data, sizeof(s_svc_data)) != 0) {
+		LOG_ERR("no commissionable payload");
+		return -EINVAL;
+	}
+	rc = bt_le_adv_start(BT_LE_ADV_PARAM(BT_LE_ADV_OPT_CONN, BT_GAP_ADV_FAST_INT_MIN_2,
+					     BT_GAP_ADV_FAST_INT_MAX_2, NULL),
+			     ad, ARRAY_SIZE(ad), NULL, 0);
+	if (rc != 0 && rc != -EALREADY) {
+		LOG_ERR("advertising failed (%d)", rc);
+		return rc;
+	}
+	return pub;
+}
+
+static void adv_work_fn(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	(void)matter_ble_advertise(s_adv_on);
+}
+static K_WORK_DEFINE(s_adv_work, adv_work_fn);
+
+/* A connection stops connectable advertising; the next one starts when the
+ * connection object is free again. */
+static void on_recycled(void)
+{
+	if (s_adv_owned) {
+		k_work_submit(&s_adv_work);
+	}
 }
 
 /* ---- init ---------------------------------------------------------------- */

@@ -4,6 +4,9 @@
  * @file matter_ble_zephyr.h
  * @brief What the Zephyr BLE transport offers the application, beyond the
  *        matter_ble.h seam: the advert payload and the GATT service switch.
+ *
+ * Only for an application that owns its advertising set. Otherwise
+ * matter_ble_advertise() (matter_ble.h) does both.
  */
 #pragma once
 

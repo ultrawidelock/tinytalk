@@ -119,9 +119,10 @@ config TINYTALK_BLE
 	  that turns it into a Matter message transport (matter_ble.h).
 	  Without it the application provides matter_ble.h itself.
 
-	  This does not start advertising. The application owns the single
-	  advertising set and asks this transport for the commissionable payload
-	  while the node has no fabric -- see TINYTALK_DISCRIMINATOR.
+	  It advertises when the application calls matter_ble_advertise().
+	  An application that owns the single advertising set asks this
+	  transport for the commissionable payload instead
+	  (matter_ble_zephyr.h) -- see TINYTALK_DISCRIMINATOR.
 
 config TINYTALK_THREAD
 	bool "Matter over Thread: OpenThread, SRP and UDP 5540"

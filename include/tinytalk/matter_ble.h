@@ -11,12 +11,17 @@
  */
 #pragma once
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/** This contract's version. An adapter in another module BUILD_ASSERTs the
+ *  value it was written for, so a change here stops its build. */
+#define MATTER_BLE_API 1
 
 /**
  * A fully reassembled Matter message.
@@ -71,6 +76,41 @@ void matter_ble_set_discriminator(uint16_t discriminator);
 
 /** The discriminator currently advertised. */
 uint16_t matter_ble_discriminator(void);
+
+/* ---- provided by the transport, called by the application ----------------
+ *
+ * Everything above is the node's half of the seam. These two are the
+ * application's: it brings the radio up once and decides when the node offers
+ * itself for commissioning (while !matter_commission_has_fabric() ||
+ * matter_commission_window_open()), and the transport does the rest. Neither
+ * takes the node's lock, so matter_commission_readvertise(), which the node
+ * calls with its lock held, defers the call to a work item.
+ */
+
+/**
+ * Bring the BLE controller and host up.
+ *
+ * Call it before matter_commission_init(). Idempotent: a second call returns
+ * zero.
+ *
+ * @return 0 or a negative errno from the stack.
+ */
+int matter_ble_start(void);
+
+/**
+ * Offer the node for commissioning over BLE, or stop offering it.
+ *
+ * On: publish the 0xFFF6 service and start the connectable commissionable
+ * advert with the current discriminator. Off: stop the advert and withdraw the
+ * service. Either way the advert is rebuilt, so call it again after the
+ * discriminator changes. A connection stops connectable advertising; the
+ * transport repeats the last request once the connection object is free again.
+ *
+ * @return 0, -EBUSY if the service could not be withdrawn because a
+ *         commissioning link holds the connection (the next readvertise
+ *         retries), or a negative errno from the stack.
+ */
+int matter_ble_advertise(bool on);
 
 #ifdef __cplusplus
 }
