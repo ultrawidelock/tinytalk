@@ -42,6 +42,9 @@ if(CONFIG_TINYTALK)
   # The crypto seams (see PORTING.md): P-256 and AES-ECB on PSA Crypto, and
   # SPAKE2+ on either nrf_oberon or Mbed TLS.
   zephyr_library_sources(${CMAKE_CURRENT_SOURCE_DIR}/backends/psa/tm_psa.c)
+  # SHA-256 on PSA too: OpenThread already links it, so the core's copy is a
+  # duplicate. Global, because the context's layout is in tm_hash.h.
+  zephyr_compile_definitions(TM_SHA256_PSA)
   if(CONFIG_TINYTALK_SPAKE2P_OBERON)
     include(${CMAKE_CURRENT_SOURCE_DIR}/backends/oberon/oberon.cmake)
   endif()

@@ -9,6 +9,7 @@
 
 #include <string.h>
 
+#ifndef TM_SHA256_PSA
 // Rotate a 32-bit word right by n bits.
 static uint32_t ror32(uint32_t x, unsigned n)
 {
@@ -168,6 +169,7 @@ void tm_sha256(const void *data, size_t len, uint8_t out[TM_SHA256_LEN])
 	tm_sha256_update(&s, data, len);
 	tm_sha256_final(&s, out);
 }
+#endif /* TM_SHA256_PSA */
 
 void tm_hmac_sha256(const uint8_t *key, size_t key_len, const void *msg, size_t msg_len,
 		       uint8_t out[TM_SHA256_LEN])

@@ -25,13 +25,23 @@ extern "C" {
 #define TM_SHA256_BLOCK 64u
 #define TM_SHA256_LEN   32u
 
-/* Streaming SHA-256 (FIPS 180-4). */
+/* Streaming SHA-256 (FIPS 180-4). With TM_SHA256_PSA the port's PSA Crypto
+ * does the hashing (backends/psa), so an image whose PSA already links SHA-256
+ * carries one copy, not two. Callers copy a context to snapshot it, which holds
+ * for PSA drivers whose hash state is plain memory, as nrf_oberon's is. */
+#ifdef TM_SHA256_PSA
+#include <psa/crypto.h>
+struct tm_sha256 {
+	psa_hash_operation_t op;
+};
+#else
 struct tm_sha256 {
 	uint32_t h[8];
 	uint64_t total; /* message length in bytes */
 	uint8_t buf[TM_SHA256_BLOCK];
 	size_t buflen;
 };
+#endif
 
 void tm_sha256_init(struct tm_sha256 *s);
 void tm_sha256_update(struct tm_sha256 *s, const void *data, size_t len);

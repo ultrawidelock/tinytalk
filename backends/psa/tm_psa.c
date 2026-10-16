@@ -245,3 +245,41 @@ int tm_random(void *out, size_t len)
 {
 	return psa_generate_random(out, len) == PSA_SUCCESS ? 0 : -EIO;
 }
+
+#ifdef TM_SHA256_PSA
+/* tm_hash.h's SHA-256 on PSA, which an image with OpenThread on PSA links
+ * anyway. The API cannot fail, so a PSA failure zeroes the digest. */
+#include <string.h>
+#include <tinytalk/tm_hash.h>
+
+void tm_sha256_init(struct tm_sha256 *s)
+{
+	s->op = psa_hash_operation_init();
+	(void)psa_hash_setup(&s->op, PSA_ALG_SHA_256);
+}
+
+void tm_sha256_update(struct tm_sha256 *s, const void *data, size_t len)
+{
+	(void)psa_hash_update(&s->op, data, len);
+}
+
+void tm_sha256_final(struct tm_sha256 *s, uint8_t out[TM_SHA256_LEN])
+{
+	size_t n = 0;
+
+	if (psa_hash_finish(&s->op, out, TM_SHA256_LEN, &n) != PSA_SUCCESS || n != TM_SHA256_LEN) {
+		memset(out, 0, TM_SHA256_LEN);
+		(void)psa_hash_abort(&s->op);
+	}
+}
+
+void tm_sha256(const void *data, size_t len, uint8_t out[TM_SHA256_LEN])
+{
+	size_t n = 0;
+
+	if (psa_hash_compute(PSA_ALG_SHA_256, data, len, out, TM_SHA256_LEN, &n) != PSA_SUCCESS ||
+	    n != TM_SHA256_LEN) {
+		memset(out, 0, TM_SHA256_LEN);
+	}
+}
+#endif /* TM_SHA256_PSA */
