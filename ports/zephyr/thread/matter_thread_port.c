@@ -42,9 +42,46 @@ LOG_MODULE_REGISTER(matter_thread, CONFIG_TINYTALK_THREAD_LOG_LEVEL);
  * thread with its API lock held, so it may only signal this semaphore. */
 static K_SEM_DEFINE(s_attach_changed, 0, 1);
 
+/* The parent last logged, so a parent change is logged once. */
+static otExtAddress s_logged_parent;
+static bool s_have_logged_parent;
+
+/*
+ * INF: role and parent changes, on OpenThread's thread with its lock held,
+ * which is where its getters may be called. A controller that stops reaching
+ * the node is checked against these first.
+ */
+static void log_role_and_parent(otChangedFlags flags)
+{
+	otInstance *ot = openthread_get_default_instance();
+	otRouterInfo parent;
+	otDeviceRole role;
+
+	if (ot == NULL || (flags & (OT_CHANGED_THREAD_ROLE | OT_CHANGED_THREAD_RLOC_ADDED)) == 0u) {
+		return;
+	}
+	role = otThreadGetDeviceRole(ot);
+	if ((flags & OT_CHANGED_THREAD_ROLE) != 0u) {
+		LOG_INF("Thread role %s, rloc16 0x%04x", otThreadDeviceRoleToString(role),
+			(unsigned int)otThreadGetRloc16(ot));
+	}
+	if (role != OT_DEVICE_ROLE_CHILD || otThreadGetParentInfo(ot, &parent) != OT_ERROR_NONE ||
+	    (s_have_logged_parent &&
+	     memcmp(&parent.mExtAddress, &s_logged_parent, sizeof(s_logged_parent)) == 0)) {
+		return;
+	}
+	s_logged_parent = parent.mExtAddress;
+	s_have_logged_parent = true;
+	LOG_INF("Thread parent %02x%02x%02x%02x%02x%02x%02x%02x, rloc16 0x%04x",
+		parent.mExtAddress.m8[0], parent.mExtAddress.m8[1], parent.mExtAddress.m8[2],
+		parent.mExtAddress.m8[3], parent.mExtAddress.m8[4], parent.mExtAddress.m8[5],
+		parent.mExtAddress.m8[6], parent.mExtAddress.m8[7], (unsigned int)parent.mRloc16);
+}
+
 static void attach_state_changed(otChangedFlags flags, void *context)
 {
 	ARG_UNUSED(context);
+	log_role_and_parent(flags);
 	if ((flags & (OT_CHANGED_THREAD_ROLE | OT_CHANGED_IP6_ADDRESS_ADDED |
 		      OT_CHANGED_IP6_ADDRESS_REMOVED | OT_CHANGED_THREAD_NETDATA)) != 0u) {
 		k_sem_give(&s_attach_changed);
