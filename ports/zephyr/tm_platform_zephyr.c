@@ -86,6 +86,12 @@ static void deep_work_fn(struct k_work *work)
 
 int tm_run_deep(void (*fn)(void *ctx), void *ctx)
 {
+	/* Already there (the BLE transport's work): waiting on ourselves would
+	 * only time out. */
+	if (k_current_get() == k_work_queue_thread_get(&k_sys_work_q)) {
+		fn(ctx);
+		return 0;
+	}
 	s_deep_fn = fn;
 	s_deep_ctx = ctx;
 	k_sem_reset(&s_deep_done);

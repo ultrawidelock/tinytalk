@@ -161,20 +161,6 @@ config TINYTALK_BLE_WINDOW
 	default 4
 	range 2 8
 
-config TINYTALK_BLE_WQ_STACK
-	int "Matter work queue stack, bytes"
-	default 4096
-	help
-	  Handling Pake1 is by far the deepest thing this queue does: a
-	  128-byte reply buffer, then matter_pase_sm.c's frame holding pA, pB,
-	  Z and V (4 x 65 B) and a SPAKE2+ result, then the P-256 scalar
-	  multiplication underneath all of it. Size it from
-	  CONFIG_THREAD_ANALYZER_AUTO output rather than by estimate.
-
-config TINYTALK_BLE_WQ_PRIO
-	int "Matter work queue thread priority"
-	default 10
-
 module = TINYTALK_BLE
 module-str = matter_ble
 source "subsys/logging/Kconfig.template.log_config"

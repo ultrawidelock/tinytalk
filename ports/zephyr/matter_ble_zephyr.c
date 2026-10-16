@@ -102,12 +102,11 @@ static matter_ble_tx_cb s_tx_cb;
 static bool s_tx_notifies;
 
 /*
- * The node's own work queue, so PASE's deep stack (see
- * CONFIG_TINYTALK_BLE_WQ_STACK) is not charged to the system work queue.
+ * Received messages and the handshake run on the system work queue: a queue
+ * of their own cost a 4 KB stack that sat idle outside commissioning. PASE's
+ * Pake1 is the deepest thing done there; tm_run_deep() runs inline when
+ * already on that queue.
  */
-K_THREAD_STACK_DEFINE(matter_wq_stack, CONFIG_TINYTALK_BLE_WQ_STACK);
-static struct k_work_queue_config matter_wq_cfg = {.name = "matter_wq"};
-static struct k_work_q matter_wq;
 static struct k_work s_msg_work;
 static size_t s_msg_len;
 /*
@@ -294,7 +293,7 @@ static ssize_t c1_write(struct bt_conn *conn, const struct bt_gatt_attr *attr, c
 		 * sends immediately; if not, it does nothing and c2_ccc_changed()
 		 * submits again. Either order works and neither indicates from a
 		 * GATT callback. */
-		k_work_submit_to_queue(&matter_wq, &s_hs_work);
+		k_work_submit(&s_hs_work);
 		return len;
 	}
 
@@ -311,7 +310,7 @@ static ssize_t c1_write(struct bt_conn *conn, const struct bt_gatt_attr *attr, c
 	}
 	if (rc == MATTER_END) {
 		s_msg_len = s_rx.len;
-		k_work_submit_to_queue(&matter_wq, &s_msg_work);
+		k_work_submit(&s_msg_work);
 	} else if (rc != MATTER_OK) {
 		/* BTP has no gap recovery: once the framing desynchronises the only
 		 * move is to drop the link. */
@@ -358,7 +357,7 @@ static void c2_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
 	LOG_INF("C2 indications %s", value == BT_GATT_CCC_INDICATE ? "on" : "off");
 
 	if (value == BT_GATT_CCC_INDICATE && s_hs_resp_len > 0u) {
-		k_work_submit_to_queue(&matter_wq, &s_hs_work);
+		k_work_submit(&s_hs_work);
 	}
 }
 
@@ -729,16 +728,12 @@ int matter_ble_commissionable_svc_data(uint8_t *out, size_t cap)
 /*
  * Started by SYS_INIT rather than by the application, because the C1 write
  * handler goes live the moment matter_ble_publish() puts the service in the
- * database, which the advertising worker does without asking the application. Leaving the queue to an explicit call meant the two lifetimes could
- * disagree, and they did -- with no caller, --gc-sections dropped this function
- * and matter_wq_stack with it, so a C1 write would have submitted to a work
- * queue that was never started. Tying the queue to the service removes the
- * question.
+ * database, which the advertising worker does without asking the application.
+ * With no caller, --gc-sections once dropped this function, and a C1 write
+ * submitted work that was never initialised.
  */
 static int matter_ble_init(void)
 {
-	k_work_queue_start(&matter_wq, matter_wq_stack, K_THREAD_STACK_SIZEOF(matter_wq_stack),
-			   CONFIG_TINYTALK_BLE_WQ_PRIO, &matter_wq_cfg);
 	k_work_init(&s_msg_work, msg_work_handler);
 	k_work_init(&s_hs_work, hs_work_handler);
 	reset_link();
