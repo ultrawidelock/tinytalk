@@ -1517,6 +1517,13 @@ struct sub_state {
 	/** Rebound after a reboot, its paths unknown: told of every change. */
 	bool resumed;
 	/**
+	 * A report went out and its StatusResponse has not come back. Reports
+	 * are not retransmitted, so this is the only trace of one that was
+	 * lost: the next report says so (report_sent_ms is when it left).
+	 */
+	bool awaiting_status;
+	uint32_t report_sent_ms;
+	/**
 	 * Where to send a report this node originates.
 	 *
 	 * Taken when the SubscribeRequest arrives, because that is the last
@@ -1917,7 +1924,15 @@ static void notify_one(struct sub_state *s, const uint32_t *changes)
 
 	session_id = s->session_id;
 	subscription_id = s->id;
+	if (s->awaiting_status) {
+		TM_LOG_INF("  subscription 0x%08x: no StatusResponse to the report sent %u ms ago",
+			   (unsigned int)s->id, (unsigned int)(tx_now_ms() - s->report_sent_ms));
+	}
 	rc = send_subscription_report(s, &one, &framed);
+	if (rc == MATTER_OK) {
+		s->awaiting_status = true;
+		s->report_sent_ms = tx_now_ms();
+	}
 	/*
 	 * At INF, not DBG, and the spell this line once spent at DBG was a
 	 * mistake worth recording: it reports whether a controller was TOLD, and
@@ -2539,10 +2554,24 @@ static void on_subscribe_request(const struct matter_exchange_in *in)
 	s->read.subscription_id = s->id;
 	s->priming = true;
 	s->active = false;
+	s->awaiting_status = false;
 
-	TM_LOG_DBG("  subscribe: %u path(s), %u..%u s, id 0x%08x, session 0x%04x", s->read.n_paths,
-		sub.min_interval_s, sub.max_interval_s, (unsigned int)s->id,
-		(unsigned int)s->session_id);
+	{
+		/* INF: which controller holds which subscription, and on what
+		 * terms, is the first thing a stalled controller is checked
+		 * against, and debug level is off in the images that get run. */
+		uint8_t cslot = case_slot_of(s->session_id);
+		uint64_t peer_node = cslot < MATTER_CASE_SESSIONS ? s_case_x[cslot].peer_op_node_id
+								   : 0u;
+
+		TM_LOG_INF("  subscribe: id 0x%08x, session 0x%04x, fabric %u, peer node "
+			   "0x%08x%08x, %u path(s), asked %u..%u s, granted %u s",
+			   (unsigned int)s->id, (unsigned int)s->session_id,
+			   cslot < MATTER_CASE_SESSIONS ? (unsigned int)s_case_fabric[cslot] : 0u,
+			   (unsigned int)(peer_node >> 32), (unsigned int)peer_node,
+			   s->read.n_paths, sub.min_interval_s, sub.max_interval_s,
+			   s->max_interval_s);
+	}
 	/*
 	 * WHICH path, not just how many. A subscription to something this node
 	 * answers with silence produces a priming report that is structurally
@@ -2643,7 +2672,10 @@ static void on_status_response(const struct matter_exchange_in *in)
 
 	if (matter_im_status_response_decode(in->payload, in->payload_len, &status) != MATTER_OK ||
 	    status != MATTER_IM_STATUS_SUCCESS) {
-		TM_LOG_WRN("invalid or unsuccessful StatusResponse");
+		TM_LOG_WRN("invalid or unsuccessful StatusResponse: status 0x%02x, session 0x%04x, "
+			   "exchange 0x%04x, subscription 0x%08x",
+			   (unsigned int)status, (unsigned int)session_id,
+			   (unsigned int)in->exchange_id, s != NULL ? (unsigned int)s->id : 0u);
 		if (read != NULL) {
 			read->in_use = false;
 		}
@@ -2671,6 +2703,10 @@ static void on_status_response(const struct matter_exchange_in *in)
 
 	if (s == NULL) {
 		return;
+	}
+	/* I clear: the answer to a report this node opened. */
+	if (!in->initiator) {
+		s->awaiting_status = false;
 	}
 	/*
 	 * Between chunks this is the peer asking for the next one, not the
