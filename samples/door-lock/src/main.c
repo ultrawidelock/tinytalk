@@ -23,6 +23,7 @@
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/fs/nvs.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/settings/settings.h>
@@ -149,6 +150,15 @@ static int64_t s_pressed_at = -1;
 static void reboot_fn(struct k_work *work)
 {
 	ARG_UNUSED(work);
+	/* The fabric erase is logical: the old records, operational keys among
+	 * them, stay in NVS until garbage collection, and OpenThread's dataset,
+	 * network key and SRP key are not the node's to erase. Clearing the
+	 * settings store takes all of it, PSA's stored keys included. */
+	void *storage;
+
+	if (settings_storage_get(&storage) == 0) {
+		(void)nvs_clear(storage);
+	}
 	sys_reboot(SYS_REBOOT_COLD);
 }
 static K_WORK_DELAYABLE_DEFINE(s_reboot_work, reboot_fn);
