@@ -67,6 +67,7 @@ static size_t inbound_ok(uint8_t *buf, size_t cap, uint8_t opcode, uint32_t coun
 }
 
 static void t_matter_exchange_ack_for_self_initiated(void);
+static void t_matter_exchange_keepalive_replay(void);
 static void t_matter_tx_pool(void);
 
 void test_matter_exchange(void)
@@ -940,6 +941,7 @@ void test_matter_exchange(void)
 	}
 
 	t_matter_exchange_ack_for_self_initiated();
+	t_matter_exchange_keepalive_replay();
 	t_matter_tx_pool();
 }
 
@@ -1120,6 +1122,159 @@ static void t_matter_exchange_ack_for_self_initiated(void)
 		T_OK("and asking for nothing back",
 		     (rph.exchange_flags & MATTER_EX_FLAG_R) == 0u);
 	}
+}
+
+/* One message from the controller on session 0xABCD, sealed as it would be. */
+static size_t replay_in(uint8_t *msg, size_t cap, const struct matter_session_keys *keys,
+			uint8_t flags, uint8_t opcode, uint16_t protocol, uint16_t exchange_id,
+			uint32_t ack_counter, uint32_t counter, const uint8_t *body, size_t body_len)
+{
+	struct matter_msg_header mh;
+	struct matter_proto_header ph;
+	uint8_t plain[64];
+	size_t plain_len = 0u;
+	size_t sealed = 0u;
+
+	memset(&ph, 0, sizeof(ph));
+	ph.exchange_flags = flags;
+	ph.opcode = opcode;
+	ph.exchange_id = exchange_id;
+	ph.protocol_id = protocol;
+	ph.ack_counter = ack_counter;
+	(void)matter_proto_header_encode(&ph, plain, sizeof(plain), &plain_len);
+	memcpy(plain + plain_len, body, body_len);
+	plain_len += body_len;
+	memset(&mh, 0, sizeof(mh));
+	mh.flags = MATTER_MSG_DSIZ_NONE;
+	mh.session_id = 0xABCDu;
+	mh.security_flags = MATTER_SESSION_TYPE_UNICAST;
+	mh.message_counter = counter;
+	(void)matter_crypto_seal(&mh, keys->i2r, MATTER_PASE_NODE_ID, plain, plain_len, msg, cap,
+				 &sealed);
+	return sealed;
+}
+
+/* What the controller reads out of a message this node sent. */
+static void replay_out(const uint8_t *out, size_t out_len,
+		       const struct matter_session_keys *keys, struct matter_proto_header *ph,
+		       uint32_t *counter)
+{
+	struct matter_msg_header got;
+	uint8_t pt[256];
+	size_t opened = 0u;
+	size_t ph_len = 0u;
+
+	memset(ph, 0, sizeof(*ph));
+	*counter = 0u;
+	if (matter_crypto_open(out, out_len, keys->r2i, MATTER_PASE_NODE_ID, &got, pt, sizeof(pt),
+			       &opened) == MATTER_OK) {
+		(void)matter_proto_header_decode(pt, opened, ph, &ph_len);
+		*counter = got.message_counter;
+	}
+}
+
+/*
+ * The exchanges around the first keep-alive of tinylock round 1, 2026-10-17,
+ * with the phone's ids and counters: its last invoke on 0x8b75, then the
+ * keep-alive on 0xe00c at 02:52:09. After that the
+ * phone sent nothing but StatusResponses. This checks that nothing on this
+ * side was left open: every reliable message from the phone is acknowledged
+ * on the exchange it came on, with the flags the peer matches against, and a
+ * request on a fresh exchange afterwards is accepted and answered.
+ */
+static void t_matter_exchange_keepalive_replay(void)
+{
+	static const uint8_t k_status_ok[] = {0x15u, 0x24u, 0x00u, 0x00u, 0x24u,
+					      0xFFu, 0x0Cu, 0x18u};
+	static const uint8_t k_keepalive[] = {0x15u, 0x24u, 0x00u, 0x01u, 0x36u, 0x02u, 0x18u,
+					      0x28u, 0x04u, 0x24u, 0xFFu, 0x0Cu, 0x18u};
+	struct matter_exchange x;
+	struct matter_exchange_in in;
+	struct matter_session_keys keys;
+	struct matter_proto_header ph;
+	uint8_t msg[256];
+	uint8_t pt[256];
+	uint8_t out[256];
+	size_t out_len = 0u;
+	size_t n;
+	uint32_t report_counter = 0u;
+	uint32_t c = 0u;
+
+	t_group("the 02:52:09 keep-alive leaves no exchange open");
+
+	memset(&keys, 0, sizeof(keys));
+	for (size_t i = 0; i < MATTER_KEY_LEN; i++) {
+		keys.i2r[i] = (uint8_t)(0x10u + i);
+		keys.r2i[i] = (uint8_t)(0x40u + i);
+		keys.attestation_challenge[i] = (uint8_t)(0x70u + i);
+	}
+	matter_exchange_init(&x, SEED, true);
+	n = inbound_ok(msg, sizeof(msg), 0x20u, 3u, NULL, 0u);
+	T_EQ("PASE message first", matter_exchange_recv(&x, msg, n, &in, pt, sizeof(pt)), MATTER_OK);
+	T_EQ("promote", matter_exchange_promote(&x, 0xABCDu, 0x1234u, &keys, 0x5EEDu), MATTER_OK);
+
+	/* 02:51:04: InvokeRequest on the phone's 0x8b75, answered there. */
+	n = replay_in(msg, sizeof(msg), &keys, MATTER_EX_FLAG_I | MATTER_EX_FLAG_R, 0x08u,
+		      MATTER_PROTOCOL_INTERACTION_MODEL, 0x8b75u, 0u, 152699872u, NULL, 0u);
+	T_EQ("the invoke is accepted", matter_exchange_recv(&x, msg, n, &in, pt, sizeof(pt)),
+	     MATTER_OK);
+	T_EQ("the InvokeResponse frames",
+	     matter_exchange_send(&x, MATTER_PROTOCOL_INTERACTION_MODEL, 0x09u, k_status_ok,
+				  sizeof(k_status_ok), out, sizeof(out), &out_len),
+	     MATTER_OK);
+	replay_out(out, out_len, &keys, &ph, &c);
+	T_EQ("on 0x8b75", (long)ph.exchange_id, 0x8b75L);
+	T_EQ("as responder, reliable, acking the invoke", (long)ph.exchange_flags,
+	     (long)(MATTER_EX_FLAG_R | MATTER_EX_FLAG_A));
+	T_EQ("its counter", (long)ph.ack_counter, 152699872L);
+
+	/* 02:52:09: the keep-alive, on an exchange this node opens. */
+	out_len = 0u;
+	T_EQ("the keep-alive frames",
+	     matter_exchange_send_initiator(&x, 0xe00cu, MATTER_PROTOCOL_INTERACTION_MODEL, 0x05u,
+					    k_keepalive, sizeof(k_keepalive), out, sizeof(out),
+					    &out_len),
+	     MATTER_OK);
+	T_EQ("43 B on the air, as logged", (long)out_len, 43L);
+	replay_out(out, out_len, &keys, &ph, &report_counter);
+	T_EQ("on 0xe00c", (long)ph.exchange_id, 0xe00cL);
+	T_EQ("initiator, reliable, no ack", (long)ph.exchange_flags,
+	     (long)(MATTER_EX_FLAG_I | MATTER_EX_FLAG_R));
+
+	/* The phone's StatusResponse: I clear, acking the keep-alive, reliable. */
+	n = replay_in(msg, sizeof(msg), &keys, MATTER_EX_FLAG_A | MATTER_EX_FLAG_R, 0x01u,
+		      MATTER_PROTOCOL_INTERACTION_MODEL, 0xe00cu, report_counter, 152699875u,
+		      k_status_ok, sizeof(k_status_ok));
+	T_EQ("the StatusResponse is accepted",
+	     matter_exchange_recv(&x, msg, n, &in, pt, sizeof(pt)), MATTER_OK);
+	T_OK("it acknowledges the keep-alive",
+	     in.carries_ack && in.acked_counter == report_counter);
+	out_len = 0u;
+	T_EQ("the ack frames",
+	     matter_exchange_ack_initiator(&x, in.exchange_id, out, sizeof(out), &out_len),
+	     MATTER_OK);
+	T_EQ("34 B, as logged", (long)out_len, 34L);
+	replay_out(out, out_len, &keys, &ph, &c);
+	T_EQ("a standalone ack", (long)ph.opcode, (long)MATTER_SC_OP_ACK);
+	T_EQ("on 0xe00c", (long)ph.exchange_id, 0xe00cL);
+	T_EQ("initiator and ack, not reliable", (long)ph.exchange_flags,
+	     (long)(MATTER_EX_FLAG_I | MATTER_EX_FLAG_A));
+	T_EQ("naming the StatusResponse", (long)ph.ack_counter, 152699875L);
+	T_OK("nothing is owed after it", !x.ack_pending);
+
+	/* The tap that never arrived: a TimedRequest on a new exchange. */
+	n = replay_in(msg, sizeof(msg), &keys, MATTER_EX_FLAG_I | MATTER_EX_FLAG_R, 0x0au,
+		      MATTER_PROTOCOL_INTERACTION_MODEL, 0x8b76u, 0u, 152699876u, NULL, 0u);
+	T_EQ("a later request is accepted", matter_exchange_recv(&x, msg, n, &in, pt, sizeof(pt)),
+	     MATTER_OK);
+	out_len = 0u;
+	T_EQ("and answered",
+	     matter_exchange_send(&x, MATTER_PROTOCOL_INTERACTION_MODEL, 0x01u, k_status_ok,
+				  sizeof(k_status_ok), out, sizeof(out), &out_len),
+	     MATTER_OK);
+	replay_out(out, out_len, &keys, &ph, &c);
+	T_EQ("on its own exchange", (long)ph.exchange_id, 0x8b76L);
+	T_EQ("acking it", (long)ph.ack_counter, 152699876L);
 }
 
 static void t_matter_tx_pool(void)

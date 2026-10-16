@@ -2337,4 +2337,33 @@ void test_matter_im_events(void)
 		T_EQ("and carries every event", count_event_reports(notify, len, NULL, NULL),
 		     (int)MATTER_EVENTS_MAX);
 	}
+
+	/*
+	 * The keep-alive that went out to both of Apple's controllers at
+	 * 02:52:09 on 2026-10-17, after which neither sent another request
+	 * (tinylock round 1). 43 B on the air: 8 B message header, 6 B
+	 * protocol header, these 13 B and the 16 B tag. Pinned so a change to
+	 * the keep-alive is a deliberate one. connectedhomeip's publisher
+	 * sends only SubscriptionId and InteractionModelRevision
+	 * (reporting/Engine.cpp rolls back an empty EventReports and writes
+	 * SuppressResponse only when true); the two extra fields are optional
+	 * and its ReadClient reads both.
+	 */
+	t_group("the subscription keep-alive, byte for byte");
+	{
+		uint8_t want[16];
+		int n;
+
+		fill_info(&info);
+		matter_clusters_init(&srv, &info);
+		one_event_path(&req);
+		req.subscription_id = 1u;
+		T_EQ("an empty report encodes",
+		     matter_im_report_data_encode(&srv, &req, out, sizeof(out), &len, NULL),
+		     MATTER_OK);
+		n = t_unhex(want, "15240001360218280424ff0c18", sizeof(want));
+		T_EQ("13 bytes", (long)len, (long)n);
+		T_OK("SubscriptionId 1, EventReports [], SuppressResponse false, revision 12",
+		     len == (size_t)n && memcmp(out, want, len) == 0);
+	}
 }
