@@ -2339,15 +2339,15 @@ void test_matter_im_events(void)
 	}
 
 	/*
-	 * The keep-alive that went out to both of Apple's controllers at
-	 * 02:52:09 on 2026-10-17, after which neither sent another request
-	 * (tinylock round 1). 43 B on the air: 8 B message header, 6 B
-	 * protocol header, these 13 B and the 16 B tag. Pinned so a change to
-	 * the keep-alive is a deliberate one. connectedhomeip's publisher
-	 * sends only SubscriptionId and InteractionModelRevision
-	 * (reporting/Engine.cpp rolls back an empty EventReports and writes
-	 * SuppressResponse only when true); the two extra fields are optional
-	 * and its ReadClient reads both.
+	 * The empty keep-alive, in connectedhomeip's shape: SubscriptionId and
+	 * InteractionModelRevision only (reporting/Engine.cpp rolls back an
+	 * empty EventReports and writes SuppressResponse only when true). The
+	 * one that went out to both of Apple's controllers at 02:52:09 on
+	 * 2026-10-17, after which neither sent another request (tinylock round
+	 * 1), also carried an empty EventReports and SuppressResponse false:
+	 * 13 B, 43 B on the air. This is 8 B, 38 B on the air (8 B message
+	 * header, 6 B protocol header, 16 B tag). Pinned so a change to the
+	 * keep-alive is a deliberate one.
 	 */
 	t_group("the subscription keep-alive, byte for byte");
 	{
@@ -2361,9 +2361,9 @@ void test_matter_im_events(void)
 		T_EQ("an empty report encodes",
 		     matter_im_report_data_encode(&srv, &req, out, sizeof(out), &len, NULL),
 		     MATTER_OK);
-		n = t_unhex(want, "15240001360218280424ff0c18", sizeof(want));
-		T_EQ("13 bytes", (long)len, (long)n);
-		T_OK("SubscriptionId 1, EventReports [], SuppressResponse false, revision 12",
+		n = t_unhex(want, "15240001" "24ff0c18", sizeof(want));
+		T_EQ("8 bytes", (long)len, (long)n);
+		T_OK("SubscriptionId 1 and revision 12, nothing else",
 		     len == (size_t)n && memcmp(out, want, len) == 0);
 	}
 }

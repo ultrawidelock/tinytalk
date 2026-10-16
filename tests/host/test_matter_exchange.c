@@ -1186,8 +1186,8 @@ static void t_matter_exchange_keepalive_replay(void)
 {
 	static const uint8_t k_status_ok[] = {0x15u, 0x24u, 0x00u, 0x00u, 0x24u,
 					      0xFFu, 0x0Cu, 0x18u};
-	static const uint8_t k_keepalive[] = {0x15u, 0x24u, 0x00u, 0x01u, 0x36u, 0x02u, 0x18u,
-					      0x28u, 0x04u, 0x24u, 0xFFu, 0x0Cu, 0x18u};
+	static const uint8_t k_keepalive[] = {0x15u, 0x24u, 0x00u, 0x01u,
+					      0x24u, 0xFFu, 0x0Cu, 0x18u};
 	struct matter_exchange x;
 	struct matter_exchange_in in;
 	struct matter_session_keys keys;
@@ -1235,7 +1235,9 @@ static void t_matter_exchange_keepalive_replay(void)
 					    k_keepalive, sizeof(k_keepalive), out, sizeof(out),
 					    &out_len),
 	     MATTER_OK);
-	T_EQ("43 B on the air, as logged", (long)out_len, 43L);
+	/* 43 B as logged in round 1, when it also carried an empty EventReports
+	 * and SuppressResponse false; 38 B in connectedhomeip's shape. */
+	T_EQ("38 B on the air", (long)out_len, 38L);
 	replay_out(out, out_len, &keys, &ph, &report_counter);
 	T_EQ("on 0xe00c", (long)ph.exchange_id, 0xe00cL);
 	T_EQ("initiator, reliable, no ack", (long)ph.exchange_flags,

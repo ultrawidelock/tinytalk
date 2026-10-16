@@ -860,6 +860,12 @@ static void put_event_report(struct matter_tlv_writer *w, const struct matter_im
  * event path produces exactly the bytes it did before this existed, which is
  * what keeps every commissioning report unchanged.
  *
+ * And opened only once an event is actually written: a report with no event to
+ * carry has no array at all, which is what connectedhomeip's publisher sends
+ * (reporting/Engine.cpp rolls an empty one back). The keep-alive was the one
+ * report that differed, and both of Apple's controllers went quiet after it
+ * (tinylock round 1, 2026-10-17).
+ *
  * Chunking walks the same cursor the attribute reports use, so events resume
  * where a previous chunk stopped. What that cannot survive is the ring EVICTING
  * between two chunks of one report: indices shift, and an event can be missed.
@@ -869,6 +875,7 @@ static void put_event_report(struct matter_tlv_writer *w, const struct matter_im
 static void put_event_reports(struct matter_tlv_writer *w, const struct matter_im_server *srv,
 			      const struct matter_im_read *req, struct chunk_ctx *cc)
 {
+	bool open = false;
 	size_t n;
 	size_t i;
 
@@ -877,14 +884,13 @@ static void put_event_reports(struct matter_tlv_writer *w, const struct matter_i
 		return;
 	}
 
-	(void)matter_tlv_start_container(w, MATTER_TLV_CTX(TAG_REPORT_EVENT_REPORTS),
-					 MATTER_TLV_ARRAY);
 	n = srv->event_count(srv->ctx);
 	for (i = 0; i < n; i++) {
 		struct matter_im_event ev;
 		size_t save_len;
 		int save_rc;
 		uint8_t save_depth;
+		bool save_open;
 
 		if (!srv->event_at(srv->ctx, i, &ev)) {
 			break;
@@ -893,6 +899,11 @@ static void put_event_reports(struct matter_tlv_writer *w, const struct matter_i
 			continue;
 		}
 		if (cc == NULL) {
+			if (!open) {
+				(void)matter_tlv_start_container(
+					w, MATTER_TLV_CTX(TAG_REPORT_EVENT_REPORTS), MATTER_TLV_ARRAY);
+				open = true;
+			}
 			put_event_report(w, srv, &ev, i);
 			continue;
 		}
@@ -903,21 +914,32 @@ static void put_event_reports(struct matter_tlv_writer *w, const struct matter_i
 			continue;
 		}
 		/* Attempted and rolled back, never predicted -- the same
-		 * discipline emit() uses, and for the same reason. */
+		 * discipline emit() uses, and for the same reason. The array's
+		 * opening rolls back with the first event if that one does not
+		 * fit. */
 		save_len = w->len;
 		save_rc = w->rc;
 		save_depth = w->depth;
+		save_open = open;
+		if (!open) {
+			(void)matter_tlv_start_container(w, MATTER_TLV_CTX(TAG_REPORT_EVENT_REPORTS),
+							 MATTER_TLV_ARRAY);
+			open = true;
+		}
 		put_event_report(w, srv, &ev, i);
 		if (w->rc != MATTER_TLV_OK || w->len + cc->reserve > w->cap) {
 			w->len = save_len;
 			w->rc = save_rc;
 			w->depth = save_depth;
+			open = save_open;
 			cc->full = true;
 			break;
 		}
 		cc->emitted++;
 	}
-	(void)matter_tlv_end_container(w);
+	if (open) {
+		(void)matter_tlv_end_container(w);
+	}
 }
 #endif /* TM_NO_EVENTS */
 
@@ -1082,8 +1104,11 @@ static int report_encode(const struct matter_im_server *srv, const struct matter
 	 * SubscribeResponse is sent in answer to. A chunk must not either --
 	 * that StatusResponse is what asks for the next one.
 	 */
-	(void)matter_tlv_put_bool(&w, MATTER_TLV_CTX(TAG_REPORT_SUPPRESS_RESPONSE),
-				  req->subscription_id == 0u && (cc == NULL || !cc->full));
+	/* Written only when true, as connectedhomeip does: false is the default
+	 * an absent field already means. */
+	if (req->subscription_id == 0u && (cc == NULL || !cc->full)) {
+		(void)matter_tlv_put_bool(&w, MATTER_TLV_CTX(TAG_REPORT_SUPPRESS_RESPONSE), true);
+	}
 	(void)matter_tlv_put_u64(&w, MATTER_TLV_CTX(TAG_IM_REVISION), MATTER_IM_REVISION);
 	(void)matter_tlv_end_container(&w);
 
