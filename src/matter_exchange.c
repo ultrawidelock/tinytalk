@@ -4,6 +4,7 @@
  * @file matter_exchange.c — the unsecured exchange. See matter_exchange.h.
  */
 #include <tinytalk/matter_exchange.h>
+#include <tinytalk/tm_log.h>
 
 #include <string.h>
 
@@ -404,6 +405,13 @@ static int matter_exchange_recv_impl(struct matter_exchange *x, const uint8_t *m
 	in->carries_ack = (ph.exchange_flags & MATTER_EX_FLAG_A) != 0u;
 	in->acked_counter = ph.ack_counter;
 	in->message_counter = mh.message_counter;
+	if (in->carries_ack) {
+		TM_LOG_DBG("  ack in: session 0x%04x exchange 0x%04x flags 0x%02x opcode 0x%02x "
+			   "counter %u acks %u", (unsigned int)mh.session_id,
+			   (unsigned int)ph.exchange_id, (unsigned int)ph.exchange_flags,
+			   (unsigned int)ph.opcode, (unsigned int)mh.message_counter,
+			   (unsigned int)ph.ack_counter);
+	}
 	if (in->carries_ack && x->replay_len != 0u &&
 	    in->acked_counter == x->replay_out_counter) {
 		x->replay_len = 0u;
@@ -608,6 +616,18 @@ static int frame(struct matter_exchange *x, uint16_t protocol_id, uint8_t opcode
 		 * memmove makes that owned-packet path explicit and remains identical
 		 * to memcpy for the traditional disjoint buffers. */
 		memmove(out + mh_len + ph_len, payload, payload_len);
+	}
+	/* DBG: the plaintext of every Interaction Model message, before the seal,
+	 * with the two header fields a stalled peer is checked against. A
+	 * standalone ack is logged with it, header only. */
+	if (protocol_id == MATTER_PROTOCOL_INTERACTION_MODEL ||
+	    (protocol_id == MATTER_PROTOCOL_SECURE_CHANNEL && opcode == MATTER_SC_OP_ACK)) {
+		TM_LOG_DBG("  out: session 0x%04x exchange 0x%04x flags 0x%02x opcode 0x%02x "
+			   "counter %u ack %u", (unsigned int)mh.session_id,
+			   (unsigned int)ph.exchange_id, (unsigned int)ph.exchange_flags,
+			   (unsigned int)opcode, (unsigned int)counter,
+			   (unsigned int)ph.ack_counter);
+		TM_LOG_HEXDUMP_DBG(out + mh_len, ph_len + payload_len, "IM out");
 	}
 
 	if (x->secure) {
@@ -824,6 +844,10 @@ int matter_exchange_ack_initiator(struct matter_exchange *x, uint16_t exchange_i
 	if (rc != MATTER_OK) {
 		return rc;
 	}
+	TM_LOG_DBG("  out: session 0x%04x exchange 0x%04x flags 0x%02x opcode 0x%02x "
+		   "counter %u ack %u", (unsigned int)mh.session_id, (unsigned int)ph.exchange_id,
+		   (unsigned int)ph.exchange_flags, (unsigned int)ph.opcode, (unsigned int)counter,
+		   (unsigned int)ph.ack_counter);
 	/* The proto header IS the plaintext; the message header is the AAD.
 	 * Sealed in place for the reason frame() sets out at length. */
 	rc = matter_crypto_seal(&mh, x->keys.r2i, x->local_op_node_id, out + mh_len, ph_len, out,
