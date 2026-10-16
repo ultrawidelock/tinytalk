@@ -66,6 +66,7 @@ static const uint32_t k_root_servers[] = {
 	MATTER_CLUSTER_GENERAL_DIAGNOSTICS,
 	MATTER_CLUSTER_OPERATIONAL_CREDENTIALS,
 	MATTER_CLUSTER_ADMIN_COMMISSIONING,
+	MATTER_CLUSTER_GROUP_KEY_MANAGEMENT,
 };
 
 /* NetworkInfoStruct (python clusters/Objects.py, NetworkInfoStruct). */
@@ -317,6 +318,7 @@ static void app_req(const struct matter_device_info *info, uint16_t endpoint,
  */
 static const struct tm_cluster *const k_root_tables[] = {
 	&matter_general_diagnostics,
+	&matter_group_key_management,
 };
 
 static const struct tm_cluster *root_table(uint32_t cluster)

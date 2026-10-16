@@ -2,7 +2,7 @@
 
 /*
  * The root clusters the Root Node device type requires and the node serves
- * from a table: General Diagnostics. Driven through the same matter_im_server
+ * from a table: General Diagnostics and Group Key Management. Driven through the same matter_im_server
  * the Interaction Model calls.
  */
 #include <string.h>
@@ -286,7 +286,179 @@ static void t_general_diagnostics(void)
 	}
 }
 
+static uint8_t root_write(struct matter_im_server *srv, uint32_t cl, uint32_t attr,
+			  const uint8_t *data, size_t len)
+{
+	struct matter_im_path path;
+
+	memset(&path, 0, sizeof(path));
+	path.endpoint = MATTER_ENDPOINT_ROOT;
+	path.have_endpoint = true;
+	path.cluster = cl;
+	path.have_cluster = true;
+	path.attribute = attr;
+	path.have_attribute = true;
+	return srv->write(srv->ctx, &path, data, len);
+}
+
+static void t_group_keys(void)
+{
+	struct matter_device_info info;
+	struct matter_im_server srv;
+	uint64_t ids[16];
+	uint8_t out[256];
+	size_t n;
+
+	admin_info(&info);
+	matter_clusters_init(&srv, &info);
+
+	t_group("Group Key Management is on the root");
+	{
+		n = read_root_ids(&srv, MATTER_CLUSTER_DESCRIPTOR, MATTER_ATTR_DESC_SERVER_LIST,
+				  ids, 16u);
+		T_OK("in ServerList", listed(ids, n, MATTER_CLUSTER_GROUP_KEY_MANAGEMENT));
+		T_EQ("ClusterRevision 2",
+		     (long)read_root_u64(&srv, MATTER_CLUSTER_GROUP_KEY_MANAGEMENT,
+					 MATTER_ATTR_CLUSTER_REVISION),
+		     2L);
+		T_EQ("FeatureMap 0, no CacheAndSync",
+		     (long)read_root_u64(&srv, MATTER_CLUSTER_GROUP_KEY_MANAGEMENT,
+					 MATTER_ATTR_FEATURE_MAP),
+		     0L);
+		T_EQ("MaxGroupsPerFabric 0",
+		     (long)read_root_u64(&srv, MATTER_CLUSTER_GROUP_KEY_MANAGEMENT,
+					 MATTER_ATTR_GKM_MAX_GROUPS),
+		     0L);
+		T_EQ("MaxGroupKeysPerFabric 1, the IPK",
+		     (long)read_root_u64(&srv, MATTER_CLUSTER_GROUP_KEY_MANAGEMENT,
+					 MATTER_ATTR_GKM_MAX_KEYS),
+		     1L);
+		n = read_root(&srv, MATTER_CLUSTER_GROUP_KEY_MANAGEMENT,
+			      MATTER_ATTR_GKM_GROUP_KEY_MAP, out, sizeof(out));
+		T_OK("GroupKeyMap empty", n == 2u && out[0] == 0x16u && out[1] == 0x18u);
+		n = read_root(&srv, MATTER_CLUSTER_GROUP_KEY_MANAGEMENT,
+			      MATTER_ATTR_GKM_GROUP_TABLE, out, sizeof(out));
+		T_OK("GroupTable empty", n == 2u && out[0] == 0x16u && out[1] == 0x18u);
+		n = read_root_ids(&srv, MATTER_CLUSTER_GROUP_KEY_MANAGEMENT,
+				  MATTER_ATTR_ACCEPTED_CMD_LIST, ids, 16u);
+		T_OK("accepts the four KeySet commands", n == 4u && ids[0] == 0u && ids[3] == 4u);
+		n = read_root_ids(&srv, MATTER_CLUSTER_GROUP_KEY_MANAGEMENT,
+				  MATTER_ATTR_GENERATED_CMD_LIST, ids, 16u);
+		T_OK("generates the two responses", n == 2u && ids[0] == 2u && ids[1] == 5u);
+	}
+
+	t_group("GroupKeyMap takes an empty list and nothing else");
+	{
+		static const uint8_t k_empty[] = {0x16u, 0x18u};
+		/* One GroupKeyMapStruct: GroupId 1, GroupKeySetID 1. */
+		static const uint8_t k_entry[] = {0x16u, 0x15u, 0x24u, 0x01u, 0x01u,
+						  0x24u, 0x02u, 0x01u, 0x18u, 0x18u};
+
+		T_EQ("empty", root_write(&srv, MATTER_CLUSTER_GROUP_KEY_MANAGEMENT,
+					  MATTER_ATTR_GKM_GROUP_KEY_MAP, k_empty, sizeof(k_empty)),
+		     MATTER_IM_STATUS_SUCCESS);
+		T_EQ("an entry", root_write(&srv, MATTER_CLUSTER_GROUP_KEY_MANAGEMENT,
+					     MATTER_ATTR_GKM_GROUP_KEY_MAP, k_entry, sizeof(k_entry)),
+		     MATTER_IM_STATUS_CONSTRAINT_ERROR);
+		T_EQ("an appended entry", root_write(&srv, MATTER_CLUSTER_GROUP_KEY_MANAGEMENT,
+						      MATTER_ATTR_GKM_GROUP_KEY_MAP, k_entry + 1,
+						      sizeof(k_entry) - 2u),
+		     MATTER_IM_STATUS_CONSTRAINT_ERROR);
+		T_EQ("GroupTable is read-only",
+		     root_write(&srv, MATTER_CLUSTER_GROUP_KEY_MANAGEMENT,
+				MATTER_ATTR_GKM_GROUP_TABLE, k_empty, sizeof(k_empty)),
+		     MATTER_IM_STATUS_UNSUPPORTED_WRITE);
+	}
+
+	t_group("the KeySet commands answer for the IPK alone");
+	{
+		static const uint8_t k_id0[] = {0x15u, 0x24u, 0x00u, 0x00u, 0x18u};
+		static const uint8_t k_id1[] = {0x15u, 0x24u, 0x00u, 0x01u, 0x18u};
+		/* KeySetWrite with GroupKeySet { GroupKeySetID }. */
+		static const uint8_t k_write0[] = {0x15u, 0x35u, 0x00u, 0x24u, 0x00u, 0x00u,
+						   0x18u, 0x18u};
+		static const uint8_t k_write1[] = {0x15u, 0x35u, 0x00u, 0x24u, 0x00u, 0x01u,
+						   0x18u, 0x18u};
+		static const uint8_t k_none[] = {0x15u, 0x18u};
+		struct matter_tlv_writer w;
+		struct matter_tlv_reader r;
+		uint32_t response;
+		uint64_t v = 0xFFu;
+
+		T_EQ("KeySetWrite of the IPK", root_invoke(&srv, MATTER_CLUSTER_GROUP_KEY_MANAGEMENT,
+							    MATTER_CMD_GKM_KEY_SET_WRITE, k_write0,
+							    sizeof(k_write0), &response),
+		     MATTER_IM_STATUS_INVALID_COMMAND);
+		T_EQ("KeySetWrite of another set: no room",
+		     root_invoke(&srv, MATTER_CLUSTER_GROUP_KEY_MANAGEMENT,
+				 MATTER_CMD_GKM_KEY_SET_WRITE, k_write1, sizeof(k_write1),
+				 &response),
+		     MATTER_IM_STATUS_RESOURCE_EXHAUSTED);
+		T_EQ("KeySetWrite without a set", root_invoke(&srv, MATTER_CLUSTER_GROUP_KEY_MANAGEMENT,
+							       MATTER_CMD_GKM_KEY_SET_WRITE, k_none,
+							       sizeof(k_none), &response),
+		     MATTER_IM_STATUS_INVALID_COMMAND);
+		T_EQ("KeySetRead of an unknown set",
+		     root_invoke(&srv, MATTER_CLUSTER_GROUP_KEY_MANAGEMENT,
+				 MATTER_CMD_GKM_KEY_SET_READ, k_id1, sizeof(k_id1), &response),
+		     MATTER_IM_STATUS_NOT_FOUND);
+		T_EQ("KeySetRemove of the IPK",
+		     root_invoke(&srv, MATTER_CLUSTER_GROUP_KEY_MANAGEMENT,
+				 MATTER_CMD_GKM_KEY_SET_REMOVE, k_id0, sizeof(k_id0), &response),
+		     MATTER_IM_STATUS_INVALID_COMMAND);
+		T_EQ("KeySetRemove of an unknown set",
+		     root_invoke(&srv, MATTER_CLUSTER_GROUP_KEY_MANAGEMENT,
+				 MATTER_CMD_GKM_KEY_SET_REMOVE, k_id1, sizeof(k_id1), &response),
+		     MATTER_IM_STATUS_NOT_FOUND);
+
+		T_EQ("KeySetRead of the IPK",
+		     root_invoke(&srv, MATTER_CLUSTER_GROUP_KEY_MANAGEMENT,
+				 MATTER_CMD_GKM_KEY_SET_READ, k_id0, sizeof(k_id0), &response),
+		     MATTER_IM_STATUS_SUCCESS);
+		T_EQ("answers KeySetReadResponse", (long)response,
+		     (long)MATTER_CMD_GKM_KEY_SET_READ_RESPONSE);
+		matter_tlv_writer_init(&w, out, sizeof(out));
+		srv.command_fields(srv.ctx, MATTER_ENDPOINT_ROOT, MATTER_CLUSTER_GROUP_KEY_MANAGEMENT,
+				   response, &w, MATTER_TLV_ANON);
+		matter_tlv_reader_init(&r, out, w.len);
+		T_OK("GroupKeySet", matter_tlv_next(&r) == MATTER_OK &&
+					    matter_tlv_enter(&r) == MATTER_OK &&
+					    matter_tlv_next(&r) == MATTER_OK &&
+					    matter_tlv_enter(&r) == MATTER_OK);
+		T_OK("id 0", matter_tlv_next(&r) == MATTER_OK &&
+				     matter_tlv_get_u64(&r, &v) == MATTER_OK && v == 0u);
+		T_OK("TrustFirst", matter_tlv_next(&r) == MATTER_OK &&
+					   matter_tlv_get_u64(&r, &v) == MATTER_OK && v == 0u);
+		T_OK("no key material", matter_tlv_next(&r) == MATTER_OK &&
+						matter_tlv_element_type(&r) == 0x14u);
+
+		T_EQ("KeySetReadAllIndices",
+		     root_invoke(&srv, MATTER_CLUSTER_GROUP_KEY_MANAGEMENT,
+				 MATTER_CMD_GKM_KEY_SET_READ_ALL, k_none, sizeof(k_none), &response),
+		     MATTER_IM_STATUS_SUCCESS);
+		matter_tlv_writer_init(&w, out, sizeof(out));
+		srv.command_fields(srv.ctx, MATTER_ENDPOINT_ROOT, MATTER_CLUSTER_GROUP_KEY_MANAGEMENT,
+				   response, &w, MATTER_TLV_ANON);
+		matter_tlv_reader_init(&r, out, w.len);
+		v = 0xFFu;
+		T_OK("lists the IPK alone",
+		     matter_tlv_next(&r) == MATTER_OK && matter_tlv_enter(&r) == MATTER_OK &&
+			     matter_tlv_next(&r) == MATTER_OK && matter_tlv_enter(&r) == MATTER_OK &&
+			     matter_tlv_next(&r) == MATTER_OK &&
+			     matter_tlv_get_u64(&r, &v) == MATTER_OK && v == 0u &&
+			     matter_tlv_next(&r) == MATTER_END);
+
+		info.accessing_node_id = 0u;
+		T_EQ("not over PASE",
+		     root_invoke(&srv, MATTER_CLUSTER_GROUP_KEY_MANAGEMENT,
+				 MATTER_CMD_GKM_KEY_SET_READ_ALL, k_none, sizeof(k_none), &response),
+		     MATTER_IM_STATUS_UNSUPPORTED_ACCESS);
+		info.accessing_node_id = 0x77u;
+	}
+}
+
 void test_root_clusters(void)
 {
 	t_general_diagnostics();
+	t_group_keys();
 }

@@ -46,6 +46,7 @@ extern "C" {
 #define MATTER_CLUSTER_OPERATIONAL_CREDENTIALS 0x003Eu
 #define MATTER_CLUSTER_ADMIN_COMMISSIONING     0x003Cu
 #define MATTER_CLUSTER_GENERAL_DIAGNOSTICS     0x0033u
+#define MATTER_CLUSTER_GROUP_KEY_MANAGEMENT    0x003Fu
 
 /*
  * General Diagnostics, which the Root Node device type requires
@@ -66,6 +67,31 @@ extern "C" {
 #define MATTER_GD_INTERFACE_THREAD             4u
 
 extern const struct tm_cluster matter_general_diagnostics;
+
+/*
+ * Group Key Management, which the Root Node device type also requires.
+ * Revision 2 and the mandatory set from group-key-mgmt-cluster.xml, with no
+ * group messaging: each fabric's only key set is its IPK (src/matter_group_keys.c).
+ *
+ * MaxGroupKeysPerFabric is 1, the spec's floor, which the IPK fills.
+ * MaxGroupsPerFabric is 0: the Group Limits minimum applies to a node that
+ * supports groups, and the Door Lock device type does not require one.
+ */
+#define MATTER_GKM_CLUSTER_REVISION              2u
+#define MATTER_ATTR_GKM_GROUP_KEY_MAP            0x0000u
+#define MATTER_ATTR_GKM_GROUP_TABLE              0x0001u
+#define MATTER_ATTR_GKM_MAX_GROUPS               0x0002u
+#define MATTER_ATTR_GKM_MAX_KEYS                 0x0003u
+#define MATTER_CMD_GKM_KEY_SET_WRITE             0x00u
+#define MATTER_CMD_GKM_KEY_SET_READ              0x01u
+#define MATTER_CMD_GKM_KEY_SET_READ_RESPONSE     0x02u
+#define MATTER_CMD_GKM_KEY_SET_REMOVE            0x03u
+#define MATTER_CMD_GKM_KEY_SET_READ_ALL          0x04u
+#define MATTER_CMD_GKM_KEY_SET_READ_ALL_RESPONSE 0x05u
+#define MATTER_GKM_MAX_GROUPS_PER_FABRIC         0u
+#define MATTER_GKM_MAX_KEYS_PER_FABRIC           1u
+
+extern const struct tm_cluster matter_group_key_management;
 
 /**
  * Count this boot in RebootCount, which persists in tm_kv. Called once per boot
