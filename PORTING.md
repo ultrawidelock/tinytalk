@@ -46,6 +46,61 @@ port for `tm_door_lock_erase()`.
 Every node entry point takes `tm_lock()` itself. A single-threaded port makes
 the lock a no-op and runs work items from its main loop.
 
+## Providing a transport from another module
+
+`ports/zephyr/` is one provider of each transport seam. A module elsewhere
+can provide one instead, with nothing in this tree naming it.
+
+A `matter_ble.h` provider defines all eight:
+
+- called by the node: `matter_ble_send`, `matter_ble_set_msg_handler`,
+  `matter_ble_set_link_handler`, `matter_ble_set_tx_handler`,
+  `matter_ble_set_discriminator`, `matter_ble_discriminator`
+- called by the application: `matter_ble_start`, `matter_ble_advertise`
+
+A `matter_thread.h` provider defines all twelve:
+
+- called by the node: `matter_thread_start`, `matter_thread_clear`,
+  `matter_thread_attached_to`, `matter_thread_wait_attached`,
+  `matter_thread_advertise`, `matter_thread_unadvertise`,
+  `matter_thread_advertise_commissionable`,
+  `matter_thread_unadvertise_commissionable`, `matter_thread_peer_current`,
+  `matter_thread_send_to`
+- called by the application: `matter_thread_advertise_reset`,
+  `matter_thread_advertise_pending`
+
+and delivers each datagram on the operational port to the node's
+`matter_thread_on_datagram()`. The SRP checklist in `matter_thread.h` (what
+Apple's border router needs) applies to every provider.
+
+Kconfig: the provider's symbol selects the seam's flag and conflicts with
+this tree's port of the same seam, so exactly one provider is linked and an
+application tests only the flag:
+
+```
+config MY_MATTER_BLE
+	bool "matter_ble.h on my stack"
+	depends on TINYTALK && !TINYTALK_BLE
+	select TINYTALK_HAS_BLE
+```
+
+and likewise `depends on !TINYTALK_THREAD` with `select TINYTALK_HAS_THREAD`
+for `matter_thread.h`.
+
+Locking: a stack callback that runs with the stack's own lock held never
+calls `tm_lock()`. Node work calls back into the stack, so waiting for the
+node's lock there deadlocks. Such a callback enters the node only through a
+function that takes the lock with `tm_trylock()`: `matter_thread_on_datagram()`
+does, and drops a datagram it cannot take the lock for, which MRP then
+retransmits. Anything else such a callback needs from the node goes to a work
+item and enters from there. `matter_ble.h` says, per handler, where the node
+expects to be called.
+
+Versions: `matter_ble.h` defines `MATTER_BLE_API` and `matter_thread.h`
+defines `MATTER_THREAD_API`, both 1. A provider asserts the value it was
+written for, `BUILD_ASSERT(MATTER_BLE_API == 1)`, so a change to the
+contract stops its build instead of linking a stale adapter.
+
 ## Adding a cluster
 
 1. Describe it in a `const struct tm_cluster`: its id, every attribute it
