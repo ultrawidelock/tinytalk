@@ -314,12 +314,26 @@ static void app_req(const struct matter_device_info *info, uint16_t endpoint,
  * Root clusters described by a struct tm_cluster, served through the same
  * table path as an application cluster: the node answers their five globals,
  * checks their privileges and dispatches their callbacks from the table. The
- * older root clusters predate the table and keep their hand-written paths.
+ * older root clusters predate the table: their globals come from the same
+ * path (k_legacy_meta), and the rest from their hand-written paths.
  */
 static const struct tm_cluster *const k_root_tables[] = {
 	&matter_general_diagnostics,
 	&matter_group_key_management,
 };
+
+/* The hand-written root clusters' and the Descriptor's metadata, for their
+ * globals: see k_legacy_meta below. */
+static const struct tm_cluster *legacy_meta(uint32_t cluster);
+
+/* The five global attributes the node answers from a cluster's table. */
+static bool is_global(uint32_t attribute)
+{
+	return attribute == MATTER_ATTR_FEATURE_MAP || attribute == MATTER_ATTR_CLUSTER_REVISION ||
+	       attribute == MATTER_ATTR_ATTRIBUTE_LIST ||
+	       attribute == MATTER_ATTR_ACCEPTED_CMD_LIST ||
+	       attribute == MATTER_ATTR_GENERATED_CMD_LIST;
+}
 
 static const struct tm_cluster *root_table(uint32_t cluster)
 {
@@ -704,12 +718,7 @@ static bool has_cluster(void *ctx, uint16_t endpoint, uint32_t cluster)
 		return ep != NULL &&
 		       (cluster == MATTER_CLUSTER_DESCRIPTOR || app_cluster(ep, cluster) != NULL);
 	}
-	return cluster == MATTER_CLUSTER_BASIC_INFORMATION ||
-	       cluster == MATTER_CLUSTER_GENERAL_COMMISSIONING ||
-	       cluster == MATTER_CLUSTER_NETWORK_COMMISSIONING ||
-	       cluster == MATTER_CLUSTER_DESCRIPTOR || cluster == MATTER_CLUSTER_ACCESS_CONTROL ||
-	       cluster == MATTER_CLUSTER_OPERATIONAL_CREDENTIALS ||
-	       cluster == MATTER_CLUSTER_ADMIN_COMMISSIONING || root_table(cluster) != NULL;
+	return legacy_meta(cluster) != NULL || root_table(cluster) != NULL;
 }
 
 /**
@@ -748,8 +757,8 @@ static uint8_t attr_status(void *ctx, uint16_t endpoint, uint32_t cluster, uint3
 		return MATTER_IM_STATUS_UNSUPPORTED_CLUSTER;
 	}
 	/*
-	 * The same list a wildcard expands, so the two cannot disagree. For an
-	 * application cluster it is also AttributeList, the globals included.
+	 * The same list a wildcard expands, so the two cannot disagree. For every
+	 * cluster it is also AttributeList, the globals included.
 	 * IsCommissioningWithoutPower (GeneralCommissioning 0x000C) is not on
 	 * its list, and a real iPhone does ask for it: UNSUPPORTED_ATTRIBUTE is
 	 * the correct answer for a node that does not implement it, and the
@@ -798,6 +807,11 @@ static void app_attr_value(const struct matter_device_info *info, uint16_t endpo
 		return;
 	}
 	if (cluster == MATTER_CLUSTER_DESCRIPTOR) {
+		if (is_global(attribute)) {
+			table_attr_value(info, legacy_meta(cluster), endpoint, attribute,
+					 fabric_filtered, w, tag);
+			return;
+		}
 		switch (attribute) {
 		case MATTER_ATTR_DESC_DEVICE_TYPE_LIST:
 			(void)matter_tlv_start_container(w, tag, MATTER_TLV_ARRAY);
@@ -953,6 +967,11 @@ static void attr_value(void *ctx, uint16_t endpoint, uint32_t cluster, uint32_t 
 	}
 	if (root_table(cluster) != NULL) {
 		table_attr_value(info, root_table(cluster), endpoint, attribute, fabric_filtered, w,
+				 tag);
+		return;
+	}
+	if (is_global(attribute) && legacy_meta(cluster) != NULL) {
+		table_attr_value(info, legacy_meta(cluster), endpoint, attribute, fabric_filtered, w,
 				 tag);
 		return;
 	}
@@ -1139,14 +1158,6 @@ static void attr_value(void *ctx, uint16_t endpoint, uint32_t cluster, uint32_t 
 			return;
 		case MATTER_ATTR_NC_LAST_NETWORKING_STATUS:
 			(void)matter_tlv_put_u64(w, tag, info->last_network_status);
-			return;
-		case MATTER_ATTR_FEATURE_MAP:
-			/*
-			 * Thread, and only Thread. This is the answer Apple was
-			 * asking for when it read this cluster with the endpoint
-			 * wildcarded and got silence.
-			 */
-			(void)matter_tlv_put_u64(w, tag, MATTER_NC_FEATURE_THREAD);
 			return;
 		default:
 			return;
@@ -1346,18 +1357,25 @@ static void attr_value(void *ctx, uint16_t endpoint, uint32_t cluster, uint32_t 
  * Attribute lists for expanding a wildcard read, and what attr_status() answers
  * SUCCESS for: one list, because an id a wildcard named and attr_status()
  * refused would turn a report into a list of UNSUPPORTED_ATTRIBUTE, which is
- * worse than the silence it replaced.
+ * worse than the silence it replaced. Each is also the cluster's AttributeList.
  *
- * The global attributes (FeatureMap 0xFFFC, ClusterRevision 0xFFFD and the
- * rest) are deliberately absent. Nothing has asked for them, and a wildcard
- * that names them commits this node to answering them individually too.
+ * Every list ends with the five global attributes, which every cluster must
+ * serve. They were left out here once, on the grounds that commissioning did
+ * without them; ClusterRevision is mandatory on every cluster, and both of
+ * Apple's controllers stopped driving this node (tinylock round 1,
+ * 2026-10-17). The node answers them from k_legacy_meta below.
  */
+#define GLOBAL_ATTRS                                                                     \
+	MATTER_ATTR_FEATURE_MAP, MATTER_ATTR_CLUSTER_REVISION, MATTER_ATTR_ATTRIBUTE_LIST, \
+		MATTER_ATTR_ACCEPTED_CMD_LIST, MATTER_ATTR_GENERATED_CMD_LIST
+
 static const uint32_t k_gc_attrs[] = {
 	MATTER_ATTR_GC_BREADCRUMB,
 	MATTER_ATTR_GC_BASIC_COMMISSIONING_INFO,
 	MATTER_ATTR_GC_REGULATORY_CONFIG,
 	MATTER_ATTR_GC_LOCATION_CAPABILITY,
 	MATTER_ATTR_GC_SUPPORTS_CONCURRENT_CONNECTION,
+	GLOBAL_ATTRS,
 };
 
 static const uint32_t k_basic_attrs[] = {
@@ -1377,6 +1395,7 @@ static const uint32_t k_basic_attrs[] = {
 	MATTER_ATTR_BASIC_CAPABILITY_MINIMA,
 	MATTER_ATTR_BASIC_SPECIFICATION_VERSION,
 	MATTER_ATTR_BASIC_MAX_PATHS_PER_INVOKE,
+	GLOBAL_ATTRS,
 };
 
 static const uint32_t k_desc_attrs[] = {
@@ -1384,6 +1403,7 @@ static const uint32_t k_desc_attrs[] = {
 	MATTER_ATTR_DESC_SERVER_LIST,
 	MATTER_ATTR_DESC_CLIENT_LIST,
 	MATTER_ATTR_DESC_PARTS_LIST,
+	GLOBAL_ATTRS,
 };
 
 static const uint32_t k_ac_attrs[] = {
@@ -1391,6 +1411,7 @@ static const uint32_t k_ac_attrs[] = {
 	MATTER_ATTR_AC_SUBJECTS_PER_ENTRY,
 	MATTER_ATTR_AC_TARGETS_PER_ENTRY,
 	MATTER_ATTR_AC_ENTRIES_PER_FABRIC,
+	GLOBAL_ATTRS,
 };
 
 /**
@@ -1404,6 +1425,7 @@ static const uint32_t k_admin_attrs[] = {
 	MATTER_ATTR_ADMIN_WINDOW_STATUS,
 	MATTER_ATTR_ADMIN_FABRIC_INDEX,
 	MATTER_ATTR_ADMIN_VENDOR_ID,
+	GLOBAL_ATTRS,
 };
 
 static const uint32_t k_oc_attrs[] = {
@@ -1413,20 +1435,110 @@ static const uint32_t k_oc_attrs[] = {
 	MATTER_ATTR_OC_COMMISSIONED_FABRICS,
 	MATTER_ATTR_OC_TRUSTED_ROOTS,
 	MATTER_ATTR_OC_CURRENT_FABRIC_INDEX,
+	GLOBAL_ATTRS,
 };
 
 /*
- * FeatureMap is in this list where it is in no other, because it is the one
- * global attribute a commissioner cannot proceed without: it says which network
- * technologies exist. Listing it here commits this node to answering it for
- * THIS cluster only, which attr_status() above does.
+ * FeatureMap says which network technologies exist: Thread, and only Thread.
+ * It is the global a commissioner cannot proceed without, and the one Apple
+ * was asking for when it read this cluster with the endpoint wildcarded and got
+ * silence.
  */
 static const uint32_t k_nc_attrs[] = {
 	MATTER_ATTR_NC_MAX_NETWORKS,      MATTER_ATTR_NC_NETWORKS,
 	MATTER_ATTR_NC_SCAN_MAX_TIME_S,   MATTER_ATTR_NC_CONNECT_MAX_TIME_S,
 	MATTER_ATTR_NC_INTERFACE_ENABLED, MATTER_ATTR_NC_LAST_NETWORKING_STATUS,
-	MATTER_ATTR_FEATURE_MAP,
+	GLOBAL_ATTRS,
 };
+
+/*
+ * AcceptedCommandList and GeneratedCommandList: exactly what command()
+ * dispatches for each cluster and what it answers with.
+ */
+static const uint32_t k_gc_cmds[] = {
+	MATTER_CMD_GC_ARM_FAIL_SAFE,
+	MATTER_CMD_GC_SET_REGULATORY_CONFIG,
+	MATTER_CMD_GC_COMMISSIONING_COMPLETE,
+};
+static const uint32_t k_gc_resps[] = {
+	MATTER_CMD_GC_ARM_FAIL_SAFE_RESPONSE,
+	MATTER_CMD_GC_SET_REGULATORY_CONFIG_RESPONSE,
+	MATTER_CMD_GC_COMMISSIONING_COMPLETE_RESPONSE,
+};
+static const uint32_t k_nc_cmds[] = {
+	MATTER_CMD_NC_ADD_OR_UPDATE_THREAD_NETWORK,
+	MATTER_CMD_NC_REMOVE_NETWORK,
+	MATTER_CMD_NC_CONNECT_NETWORK,
+};
+static const uint32_t k_nc_resps[] = {
+	MATTER_CMD_NC_NETWORK_CONFIG_RESPONSE,
+	MATTER_CMD_NC_CONNECT_NETWORK_RESPONSE,
+};
+static const uint32_t k_oc_cmds[] = {
+	MATTER_CMD_OC_ATTESTATION_REQUEST,     MATTER_CMD_OC_CERTIFICATE_CHAIN_REQUEST,
+	MATTER_CMD_OC_CSR_REQUEST,             MATTER_CMD_OC_ADD_NOC,
+	MATTER_CMD_OC_UPDATE_FABRIC_LABEL,     MATTER_CMD_OC_REMOVE_FABRIC,
+	MATTER_CMD_OC_ADD_TRUSTED_ROOT_CERTIFICATE,
+};
+static const uint32_t k_oc_resps[] = {
+	MATTER_CMD_OC_ATTESTATION_RESPONSE,
+	MATTER_CMD_OC_CERTIFICATE_CHAIN_RESPONSE,
+	MATTER_CMD_OC_CSR_RESPONSE,
+	MATTER_CMD_OC_NOC_RESPONSE,
+};
+#ifndef TM_NO_ADMIN_COMMANDS
+static const uint32_t k_admin_cmds[] = {
+	MATTER_CMD_ADMIN_OPEN_WINDOW,
+	MATTER_CMD_ADMIN_OPEN_BASIC_WINDOW,
+	MATTER_CMD_ADMIN_REVOKE,
+};
+#endif
+
+#define N_OF(a) (uint8_t)(sizeof(a) / sizeof((a)[0]))
+
+/*
+ * The hand-written clusters' metadata, and the Descriptor's on every endpoint:
+ * the globals answered from these through the table path, everything else by
+ * attr_value() as before. Revisions are the SDK's cluster XMLs (the 1.5 data
+ * model; data_model/1.5/clusters for the three whose zap XML names none).
+ */
+static const struct tm_cluster k_legacy_meta[] = {
+	{ .id = MATTER_CLUSTER_DESCRIPTOR, .attrs = k_desc_attrs, .n_attrs = N_OF(k_desc_attrs),
+	  /* No TagList, so no TAGLIST feature. */
+	  .revision = 3u },
+	{ .id = MATTER_CLUSTER_ACCESS_CONTROL, .attrs = k_ac_attrs, .n_attrs = N_OF(k_ac_attrs),
+	  .revision = 2u },
+	{ .id = MATTER_CLUSTER_BASIC_INFORMATION, .attrs = k_basic_attrs,
+	  .n_attrs = N_OF(k_basic_attrs), .revision = 5u },
+	{ .id = MATTER_CLUSTER_GENERAL_COMMISSIONING, .attrs = k_gc_attrs,
+	  .n_attrs = N_OF(k_gc_attrs), .accepted = k_gc_cmds, .n_accepted = N_OF(k_gc_cmds),
+	  .generated = k_gc_resps, .n_generated = N_OF(k_gc_resps), .revision = 2u },
+	{ .id = MATTER_CLUSTER_NETWORK_COMMISSIONING, .attrs = k_nc_attrs,
+	  .n_attrs = N_OF(k_nc_attrs), .accepted = k_nc_cmds, .n_accepted = N_OF(k_nc_cmds),
+	  .generated = k_nc_resps, .n_generated = N_OF(k_nc_resps), .revision = 2u,
+	  .features = MATTER_NC_FEATURE_THREAD },
+	{ .id = MATTER_CLUSTER_OPERATIONAL_CREDENTIALS, .attrs = k_oc_attrs,
+	  .n_attrs = N_OF(k_oc_attrs), .accepted = k_oc_cmds, .n_accepted = N_OF(k_oc_cmds),
+	  .generated = k_oc_resps, .n_generated = N_OF(k_oc_resps), .revision = 2u },
+	{ .id = MATTER_CLUSTER_ADMIN_COMMISSIONING, .attrs = k_admin_attrs,
+	  .n_attrs = N_OF(k_admin_attrs),
+#ifndef TM_NO_ADMIN_COMMANDS
+	  .accepted = k_admin_cmds, .n_accepted = N_OF(k_admin_cmds),
+	  /* Basic: OpenBasicCommissioningWindow is served. */
+	  .features = 0x1u,
+#endif
+	  .revision = 1u },
+};
+
+static const struct tm_cluster *legacy_meta(uint32_t cluster)
+{
+	for (size_t i = 0u; i < sizeof(k_legacy_meta) / sizeof(k_legacy_meta[0]); i++) {
+		if (k_legacy_meta[i].id == cluster) {
+			return &k_legacy_meta[i];
+		}
+	}
+	return NULL;
+}
 
 /**
  * Every cluster on @p endpoint, which is the same list has_cluster() answers
@@ -1482,33 +1594,9 @@ static size_t list_attrs(void *ctx, uint16_t endpoint, uint32_t cluster, const u
 		*out = root_table(cluster)->attrs;
 		return root_table(cluster)->n_attrs;
 	}
-	if (cluster == MATTER_CLUSTER_BASIC_INFORMATION) {
-		*out = k_basic_attrs;
-		return sizeof(k_basic_attrs) / sizeof(k_basic_attrs[0]);
-	}
-	if (cluster == MATTER_CLUSTER_ADMIN_COMMISSIONING) {
-		*out = k_admin_attrs;
-		return sizeof(k_admin_attrs) / sizeof(k_admin_attrs[0]);
-	}
-	if (cluster == MATTER_CLUSTER_GENERAL_COMMISSIONING) {
-		*out = k_gc_attrs;
-		return sizeof(k_gc_attrs) / sizeof(k_gc_attrs[0]);
-	}
-	if (cluster == MATTER_CLUSTER_DESCRIPTOR) {
-		*out = k_desc_attrs;
-		return sizeof(k_desc_attrs) / sizeof(k_desc_attrs[0]);
-	}
-	if (cluster == MATTER_CLUSTER_ACCESS_CONTROL) {
-		*out = k_ac_attrs;
-		return sizeof(k_ac_attrs) / sizeof(k_ac_attrs[0]);
-	}
-	if (cluster == MATTER_CLUSTER_OPERATIONAL_CREDENTIALS) {
-		*out = k_oc_attrs;
-		return sizeof(k_oc_attrs) / sizeof(k_oc_attrs[0]);
-	}
-	if (cluster == MATTER_CLUSTER_NETWORK_COMMISSIONING) {
-		*out = k_nc_attrs;
-		return sizeof(k_nc_attrs) / sizeof(k_nc_attrs[0]);
+	if (legacy_meta(cluster) != NULL) {
+		*out = legacy_meta(cluster)->attrs;
+		return legacy_meta(cluster)->n_attrs;
 	}
 	return 0u;
 }

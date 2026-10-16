@@ -55,11 +55,11 @@ extern "C" {
 
 /*
  * The global attributes (GlobalAttributeIds.h), answered by the node for every
- * application cluster that lists them. The CHIP-based lock builds answer all of
- * these on every cluster, and Apple Home builds its accessory-settings UI from
- * what it can discover -- the missing globals are the working hypothesis for
- * why Home showed this lock none of the optional controls the CHIP builds get.
- * The root endpoint commissions fine without them and stays as it was.
+ * application cluster that lists them, and for every cluster on endpoint 0 and
+ * every Descriptor. The CHIP-based lock builds answer all of these on every
+ * cluster, and Apple Home builds its accessory-settings UI from what it can
+ * discover -- the missing globals are the working hypothesis for why Home
+ * showed this lock none of the optional controls the CHIP builds get.
  */
 #define MATTER_ATTR_GENERATED_CMD_LIST 0xFFF8u
 #define MATTER_ATTR_ACCEPTED_CMD_LIST  0xFFF9u

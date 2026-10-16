@@ -10,6 +10,7 @@
 #include <tinytalk/matter_clusters.h>
 #include <tinytalk/matter_im.h>
 #include <tinytalk/matter_tlv.h>
+#include <tinytalk/tm_door_lock.h>
 #include <tinytalk/tm_kv.h>
 #include <tinytalk/tm_platform.h>
 
@@ -457,8 +458,182 @@ static void t_group_keys(void)
 	}
 }
 
+/* What each cluster on endpoint 0 must say about itself. */
+struct want_globals {
+	uint32_t cluster;
+	uint64_t revision;
+	uint64_t features;
+	size_t accepted;
+	size_t generated;
+};
+
+static const struct want_globals k_want[] = {
+	{ MATTER_CLUSTER_DESCRIPTOR, 3u, 0u, 0u, 0u },
+	{ MATTER_CLUSTER_ACCESS_CONTROL, 2u, 0u, 0u, 0u },
+	{ MATTER_CLUSTER_BASIC_INFORMATION, 5u, 0u, 0u, 0u },
+	{ MATTER_CLUSTER_GENERAL_COMMISSIONING, 2u, 0u, 3u, 3u },
+	{ MATTER_CLUSTER_NETWORK_COMMISSIONING, 2u, MATTER_NC_FEATURE_THREAD, 3u, 2u },
+	{ MATTER_CLUSTER_GENERAL_DIAGNOSTICS, 2u, 0u, 2u, 1u },
+	{ MATTER_CLUSTER_OPERATIONAL_CREDENTIALS, 2u, 0u, 7u, 4u },
+	{ MATTER_CLUSTER_ADMIN_COMMISSIONING, 1u, 1u, 3u, 0u },
+	{ MATTER_CLUSTER_GROUP_KEY_MANAGEMENT, 2u, 0u, 4u, 2u },
+};
+
+static const uint32_t k_globals[] = {
+	MATTER_ATTR_FEATURE_MAP,       MATTER_ATTR_CLUSTER_REVISION, MATTER_ATTR_ATTRIBUTE_LIST,
+	MATTER_ATTR_ACCEPTED_CMD_LIST, MATTER_ATTR_GENERATED_CMD_LIST,
+};
+
+/* Encode one attribute anywhere; how many top-level elements it was. */
+static size_t value_len(struct matter_im_server *srv, uint16_t ep, uint32_t cl, uint32_t attr)
+{
+	struct matter_tlv_writer w;
+	uint8_t out[512];
+
+	matter_tlv_writer_init(&w, out, sizeof(out));
+	srv->value(srv->ctx, ep, cl, attr, false, &w, MATTER_TLV_ANON);
+	return w.len;
+}
+
+static void t_globals(void)
+{
+	struct matter_device_info info;
+	struct matter_im_server srv;
+	uint64_t servers[16];
+	uint64_t ids[32];
+	size_t n_servers;
+
+	T_EQ("the Door Lock endpoint is taken",
+	     matter_clusters_set_endpoints(&tm_door_lock_endpoint, 1u), MATTER_OK);
+	admin_info(&info);
+	matter_clusters_init(&srv, &info);
+
+	t_group("every cluster on endpoint 0 serves the five globals");
+	{
+		const uint32_t *attrs = NULL;
+		size_t n_attrs;
+		int complete = 0;
+
+		n_servers = read_root_ids(&srv, MATTER_CLUSTER_DESCRIPTOR,
+					  MATTER_ATTR_DESC_SERVER_LIST, servers, 16u);
+		T_EQ("ServerList has the nine root clusters", (long)n_servers, 9L);
+		for (size_t c = 0u; c < n_servers; c++) {
+			int ok = 1;
+
+			/* The wildcard's list, which is also AttributeList. */
+			n_attrs = srv.list_attrs(srv.ctx, MATTER_ENDPOINT_ROOT,
+						 (uint32_t)servers[c], &attrs);
+			for (size_t g = 0u; g < 5u; g++) {
+				bool in_list = false;
+
+				for (size_t i = 0u; i < n_attrs; i++) {
+					in_list = in_list || attrs[i] == k_globals[g];
+				}
+				if (!in_list ||
+				    srv.status(srv.ctx, MATTER_ENDPOINT_ROOT, (uint32_t)servers[c],
+					       k_globals[g]) != MATTER_IM_STATUS_SUCCESS ||
+				    value_len(&srv, MATTER_ENDPOINT_ROOT, (uint32_t)servers[c],
+					      k_globals[g]) == 0u) {
+					ok = 0;
+				}
+			}
+			complete += ok;
+		}
+		T_EQ("in its wildcard list, served and non-empty, on all nine", complete, 9);
+	}
+
+	t_group("each root cluster's globals have its own values");
+	{
+		for (size_t i = 0u; i < sizeof(k_want) / sizeof(k_want[0]); i++) {
+			const struct want_globals *wg = &k_want[i];
+			size_t n_attrs;
+			const uint32_t *attrs = NULL;
+
+			T_EQ("ClusterRevision",
+			     (long)read_root_u64(&srv, wg->cluster, MATTER_ATTR_CLUSTER_REVISION),
+			     (long)wg->revision);
+			T_EQ("FeatureMap",
+			     (long)read_root_u64(&srv, wg->cluster, MATTER_ATTR_FEATURE_MAP),
+			     (long)wg->features);
+			T_EQ("AcceptedCommandList",
+			     (long)read_root_ids(&srv, wg->cluster, MATTER_ATTR_ACCEPTED_CMD_LIST,
+						 ids, 32u),
+			     (long)wg->accepted);
+			T_EQ("GeneratedCommandList",
+			     (long)read_root_ids(&srv, wg->cluster, MATTER_ATTR_GENERATED_CMD_LIST,
+						 ids, 32u),
+			     (long)wg->generated);
+			n_attrs = srv.list_attrs(srv.ctx, MATTER_ENDPOINT_ROOT, wg->cluster, &attrs);
+			T_EQ("AttributeList is the wildcard's list",
+			     (long)read_root_ids(&srv, wg->cluster, MATTER_ATTR_ATTRIBUTE_LIST, ids,
+						 32u),
+			     (long)n_attrs);
+		}
+	}
+
+	t_group("a wildcard over endpoint 0 reports every global");
+	{
+		static struct matter_im_read one;
+		static uint8_t big[8192];
+		uint16_t sent = 0u;
+		uint16_t emitted = 0u;
+		bool more = true;
+		int chunks = 0;
+		int globals = 0;
+		size_t len = 0u;
+
+		memset(&one, 0, sizeof(one));
+		one.n_paths = 1u;
+		one.paths[0].endpoint = MATTER_ENDPOINT_ROOT;
+		one.paths[0].have_endpoint = true;
+		while (more && chunks < 16) {
+			T_EQ("a chunk encodes",
+			     matter_im_report_data_chunk(&srv, &one, sent, big, 1180u, &len, &more,
+							 &emitted, NULL),
+			     MATTER_OK);
+			sent = (uint16_t)(sent + emitted);
+			chunks++;
+			/* Count AttributePathIBs naming a global: the Attribute
+			 * field, context tag 4, as a 2-byte unsigned. */
+			for (size_t i = 0u; i + 4u < len; i++) {
+				if (big[i] == 0x25u && big[i + 1u] == 0x04u && big[i + 3u] == 0xFFu &&
+				    (big[i + 2u] == 0xF8u || big[i + 2u] == 0xF9u ||
+				     big[i + 2u] == 0xFBu || big[i + 2u] == 0xFCu ||
+				     big[i + 2u] == 0xFDu)) {
+					globals++;
+				}
+			}
+		}
+		T_OK("in more than one chunk", chunks > 1 && !more);
+		T_EQ("five globals for each of the nine clusters", globals, 45);
+	}
+
+	t_group("every endpoint's Descriptor serves the five globals");
+	{
+		{
+			struct matter_tlv_writer w;
+			uint8_t out[8];
+
+			matter_tlv_writer_init(&w, out, sizeof(out));
+			srv.value(srv.ctx, MATTER_ENDPOINT_LOCK, MATTER_CLUSTER_DESCRIPTOR,
+				  MATTER_ATTR_CLUSTER_REVISION, false, &w, MATTER_TLV_ANON);
+			T_OK("revision 3 on the lock endpoint too",
+			     w.len == 2u && out[0] == 0x04u && out[1] == 0x03u);
+		}
+		T_EQ("ClusterRevision served", srv.status(srv.ctx, MATTER_ENDPOINT_LOCK,
+							   MATTER_CLUSTER_DESCRIPTOR,
+							   MATTER_ATTR_CLUSTER_REVISION),
+		     MATTER_IM_STATUS_SUCCESS);
+		T_EQ("GeneratedCommandList served",
+		     srv.status(srv.ctx, MATTER_ENDPOINT_LOCK, MATTER_CLUSTER_DESCRIPTOR,
+				MATTER_ATTR_GENERATED_CMD_LIST),
+		     MATTER_IM_STATUS_SUCCESS);
+	}
+}
+
 void test_root_clusters(void)
 {
 	t_general_diagnostics();
 	t_group_keys();
+	t_globals();
 }

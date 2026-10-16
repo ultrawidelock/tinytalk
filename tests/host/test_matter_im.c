@@ -422,7 +422,7 @@ void test_matter_im(void)
 	struct matter_im_server srv;
 	struct matter_im_report_stats stats;
 	struct rep reps[MAX_REPS];
-	uint8_t out[512];
+	uint8_t out[1024];
 	size_t len = 0u;
 	bool suppress = false;
 	uint64_t revision = 0u;
@@ -613,7 +613,8 @@ void test_matter_im(void)
 		T_EQ("nothing left unexpanded", stats.unexpanded_wildcard, 0);
 		T_EQ("nothing counted as absent", stats.skipped_wildcard, 0);
 		m = walk_report(out, len, sreps, &suppress, &revision);
-		T_EQ("every BasicInformation attribute reported", m, 16);
+		/* Sixteen of its own and the five globals. */
+		T_EQ("every BasicInformation attribute reported", m, 21);
 
 		/* An ENDPOINT wildcard expands over every endpoint this node
 		 * has. Apple reads NetworkCommissioning exactly this way, and
@@ -1085,7 +1086,8 @@ void test_matter_im(void)
 		T_EQ("nothing left unexpanded", stats.unexpanded_wildcard, 0);
 		T_EQ("nothing skipped", stats.skipped_wildcard, 0);
 		m = walk_report(out, len, wreps, &suppress, &revision);
-		T_EQ("all five attributes reported", m, 5);
+		/* Five of its own and the five globals. */
+		T_EQ("all ten attributes reported", m, 10);
 		T_OK("breadcrumb among them", find(wreps, m, MATTER_CLUSTER_GENERAL_COMMISSIONING,
 						   MATTER_ATTR_GC_BREADCRUMB) != NULL);
 		T_OK("concurrent connection among them",
