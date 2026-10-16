@@ -16,7 +16,7 @@ and fails if the list changes (`tests/seams.expected`, 46 symbols).
 | `matter_ble.h` | `matter_ble_send`, `matter_ble_set_{msg,link,tx}_handler`, `matter_ble_{set_,}discriminator` | `ports/zephyr/matter_ble_zephyr.c` | `tests/host/host_port.c` |
 | `matter_thread.h` | `matter_thread_{start,clear,wait_attached,attached_to,advertise,unadvertise,advertise_commissionable,unadvertise_commissionable,peer_current,send_to}` | `ports/zephyr/thread/matter_thread_port.c` | `tests/host/test_matter_thread_stub.c`, `tests/host/host_port.c` |
 | `matter_crypto.h`, `matter_attest.h`, `matter_case.h` | `crypto_aes_ecb_encrypt`, `matter_attest_ec_keygen`, `matter_attest_ecdsa_sign`, `matter_case_{ecdh,sign,verify}` | `backends/psa/tm_psa.c` | `tests/host/aes_ref.c`, `tests/host/test_matter_{attest,case}_stub.c` |
-| `matter_spake2p.h` | `ocrypto_spake2p_p256_{reduce,check_key,get_key_share,get_ZV}` | `backends/oberon/oberon.cmake` or `backends/mbedtls/` | `backends/mbedtls/` or `tests/host/spakefake` (`SPAKE=fake`) |
+| `matter_spake2p.h` | `ocrypto_spake2p_p256_{reduce,check_key,get_key_share,get_ZV}` | `backends/oberon/oberon.cmake`, `backends/mbedtls/` or `backends/tinypsa/` | `backends/mbedtls/` or `tests/host/spakefake` (`SPAKE=fake`) |
 | `matter_commission.h` | `matter_commission_readvertise` | the application, for example tinylock's door-lock | `tests/host/host_port.c` |
 | `tm_log.h` | optional: build with `-DTM_LOG_HEADER="<header>"` | `ports/zephyr/tm_log_zephyr.h` | compiled out |
 
@@ -76,6 +76,14 @@ endpoint), `TM_ATTRS_MAX` (64 in all) and `TM_EVENT_BLOB_MAX` (16 B).
    `tests/host/test_spake2p_mbedtls.c` checks the Mbed TLS backend against
    connectedhomeip's vectors. A backend that only agrees with itself proves
    nothing.
+
+`backends/tinypsa/` is the smallest case: tinypsa's `spake2p_p256.h` already
+follows nrf_oberon's contract under `tinypsa_` names, so
+`tm_spake2p_tinypsa.c` defines the four `ocrypto_spake2p_p256_*` functions
+with the core's prototypes and forwards each one, with no arithmetic of its
+own. Step 3 is tinypsa's own suite for the math and PASE on hardware for the
+wiring. `CONFIG_TINYTALK_SPAKE2P_TINYPSA` picks it, and is the default when
+`CONFIG_TINYPSA` is set.
 
 ### Why Mbed TLS for the portable SPAKE2+ backend
 

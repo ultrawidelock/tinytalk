@@ -15,8 +15,17 @@ config TINYTALK
 choice TINYTALK_SPAKE2P
 	prompt "SPAKE2+ P-256 backend"
 	depends on TINYTALK
+	default TINYTALK_SPAKE2P_TINYPSA if TINYPSA
 	default TINYTALK_SPAKE2P_OBERON if NRF_SECURITY
 	default TINYTALK_SPAKE2P_MBEDTLS
+
+config TINYTALK_SPAKE2P_TINYPSA
+	bool "tinypsa (backends/tinypsa)"
+	depends on TINYPSA
+	help
+	  Forward the four primitives to tinypsa's tinypsa_spake2p_p256_*,
+	  which follow nrf_oberon's contract. For an image whose PSA Crypto
+	  provider is tinypsa, where nrf_security and Mbed TLS ECP are absent.
 
 config TINYTALK_SPAKE2P_OBERON
 	bool "nrf_oberon (nRF Connect SDK, Nordic parts only)"

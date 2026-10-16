@@ -52,7 +52,7 @@ if(CONFIG_TINYTALK)
   zephyr_library_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/ports/zephyr)
 
   # The crypto seams (see PORTING.md): P-256 and AES-ECB on PSA Crypto, and
-  # SPAKE2+ on either nrf_oberon or Mbed TLS.
+  # SPAKE2+ on nrf_oberon, Mbed TLS or tinypsa.
   zephyr_library_sources(${CMAKE_CURRENT_SOURCE_DIR}/backends/psa/tm_psa.c)
   # SHA-256 on PSA too: OpenThread already links it, so the core's copy is a
   # duplicate. Global, because the context's layout is in tm_hash.h.
@@ -62,6 +62,9 @@ if(CONFIG_TINYTALK)
   endif()
   if(CONFIG_TINYTALK_SPAKE2P_MBEDTLS)
     zephyr_library_sources(${CMAKE_CURRENT_SOURCE_DIR}/backends/mbedtls/tm_spake2p_mbedtls.c)
+  endif()
+  if(CONFIG_TINYTALK_SPAKE2P_TINYPSA)
+    zephyr_library_sources(${CMAKE_CURRENT_SOURCE_DIR}/backends/tinypsa/tm_spake2p_tinypsa.c)
   endif()
 
   # The Zephyr port: platform, BLE transport, storage, Thread.
