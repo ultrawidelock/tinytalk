@@ -777,9 +777,22 @@ int matter_ble_advertise(bool on)
 		LOG_ERR("no commissionable payload");
 		return -EINVAL;
 	}
+#if defined(CONFIG_TINYTALK_BLE_SCAN_RSP)
+	/* CONFIG_TINYTALK_BLE_SCAN_RSP_UUID128, turned into bytes by
+	 * ports/zephyr/CMakeLists.txt. The advert has no room left for it. */
+	static const uint8_t uuid[] = {TM_BLE_SCAN_RSP_UUID128};
+	const struct bt_data sd[] = {
+		BT_DATA(BT_DATA_UUID128_ALL, uuid, sizeof(uuid)),
+	};
+
+	rc = bt_le_adv_start(BT_LE_ADV_PARAM(BT_LE_ADV_OPT_CONN, BT_GAP_ADV_FAST_INT_MIN_2,
+					     BT_GAP_ADV_FAST_INT_MAX_2, NULL),
+			     ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
+#else
 	rc = bt_le_adv_start(BT_LE_ADV_PARAM(BT_LE_ADV_OPT_CONN, BT_GAP_ADV_FAST_INT_MIN_2,
 					     BT_GAP_ADV_FAST_INT_MAX_2, NULL),
 			     ad, ARRAY_SIZE(ad), NULL, 0);
+#endif
 	if (rc != 0 && rc != -EALREADY) {
 		LOG_ERR("advertising failed (%d)", rc);
 		return rc;

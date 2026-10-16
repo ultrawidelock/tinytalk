@@ -246,6 +246,23 @@ config TINYTALK_BLE_WINDOW
 	default 4
 	range 2 8
 
+config TINYTALK_BLE_SCAN_RSP_UUID128
+	string "128-bit service UUID for the scan response"
+	default ""
+	help
+	  A UUID such as 8d53dc1d-1db7-4cd3-868b-8a527460aa84 (SMP) puts a
+	  scan response next to the commissionable advert, which is already
+	  full at 31 B: one Complete List of 128-bit Service UUIDs, 18 B. It
+	  goes out whenever matter_ble_advertise() advertises. Empty, the
+	  default, sends no scan response and builds no code for one. The
+	  build stops if the value is not 32 hex digits, hyphens aside.
+
+	  Costs 32 B of flash and no RAM (decawave_dwm3001cdk, tinylock's
+	  door-lock with stacks/tinyfota.conf, LTO on, measured 2026-10-17).
+
+config TINYTALK_BLE_SCAN_RSP
+	def_bool TINYTALK_BLE_SCAN_RSP_UUID128 != ""
+
 module = TINYTALK_BLE
 module-str = matter_ble
 source "subsys/logging/Kconfig.template.log_config"
