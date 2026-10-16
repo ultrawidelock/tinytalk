@@ -869,6 +869,16 @@ void matter_thread_advertise_reset(void)
 	openthread_mutex_unlock();
 }
 
+bool matter_thread_advertise_pending(void)
+{
+	bool pending;
+
+	openthread_mutex_lock();
+	pending = s_srp_resetting;
+	openthread_mutex_unlock();
+	return pending;
+}
+
 /*
  * The host name, built outside the OpenThread lock because srp_host_id() reaches
  * into the settings backend and that is not somewhere to go holding it.

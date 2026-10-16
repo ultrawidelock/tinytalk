@@ -28,6 +28,10 @@
 extern "C" {
 #endif
 
+/** This contract's version. An adapter in another module BUILD_ASSERTs the
+ *  value it was written for, so a change here stops its build. */
+#define MATTER_THREAD_API 1
+
 /**
  * Hand @p dataset to the Thread stack and start attaching.
  *
@@ -110,6 +114,29 @@ int matter_thread_wait_attached(uint32_t timeout_ms);
 
 /** The port a Matter node listens on operationally (lib/core/CHIPConfig.h:335). */
 #define MATTER_OPERATIONAL_PORT 5540u
+
+/*
+ * What Apple's border router needs from the SRP functions below, learnt on
+ * hardware. A port does the first three itself; the fourth is the
+ * application's, with the port's two reset calls.
+ *
+ *  1. The commissionable record asks a lease of its own, 120 s, not the
+ *     operational records' 2 h: a node that loses power with a window open
+ *     otherwise leaves a _matterc record that Apple Home dials over Thread
+ *     instead of using BLE (e2410b9, 2026-10-16). An open window renews it.
+ *  2. A record is removed by name. Removing the host, even with its key
+ *     lease, does not remove its services: Apple's border router kept one
+ *     for over 22 min (a029e57, 2026-10-16).
+ *  3. The window record's name is persisted while it is registered, and a
+ *     record a crash or reset left behind is registered again under that
+ *     name and removed at the next boot (a029e57, 2026-10-16).
+ *  4. Every record is retracted before a factory-reset reboot:
+ *     matter_thread_advertise_reset(), then wait while
+ *     matter_thread_advertise_pending() (b1ed1a6, 2026-10-16).
+ *
+ * Refusing PASE over IP without an open window is the node's job
+ * (363908a, src/matter_commission.c) and needs nothing from a port.
+ */
 
 /**
  * Register this node's operational service so a commissioner can find it.
@@ -217,6 +244,16 @@ int matter_thread_send_to(const struct matter_thread_peer *peer, const uint8_t *
  * fails immediately after PASE with nothing to resolve.
  */
 void matter_thread_advertise_reset(void);
+
+/**
+ * Whether removals started by matter_thread_advertise_reset() are in flight.
+ *
+ * An application that reboots after a reset, a factory reset above all, waits
+ * while this is true, bounded, so the border router hears every removal
+ * before the node goes quiet. A port whose reset completes before it returns
+ * answers false.
+ */
+bool matter_thread_advertise_pending(void);
 
 /**
  * Accept one reply while the inbound OpenThread callback is still current.
