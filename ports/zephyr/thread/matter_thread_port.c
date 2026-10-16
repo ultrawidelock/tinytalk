@@ -109,9 +109,10 @@ static int attach_callback_ensure(void)
  * It is the one record whose ghost strands a commissioner: a node that loses
  * power, crashes or is reflashed with a window open leaves it on the border
  * router, and Apple Home tries PASE over Thread to the vanished node instead of
- * using BLE, stuck at "Connecting" (2026-10-16). Two minutes bounds that.
- * OpenThread renews a lease under 240 s at half its length, so an open window
- * costs one SRP update a minute. A request, like the key lease.
+ * using BLE, stuck at "Connecting" (2026-10-16). Two minutes bounds that on a
+ * server that grants it; Apple's did not, and kept one over 22 min, so the next
+ * boot also removes it by name (SRP_COMM_KEY). OpenThread renews a lease under
+ * 240 s at half its length, so an open window costs one SRP update a minute.
  */
 #define SRP_COMM_LEASE_S 120u
 
@@ -417,6 +418,20 @@ struct srp_wanted_commissionable {
 };
 static struct srp_wanted_commissionable s_wanted_comm;
 
+/*
+ * The window record's name, kept in settings while it is registered.
+ *
+ * Apple's border router keeps a record its node never retracted well past the
+ * lease asked for (over 14 min against 2 min, 2026-10-16), and does not drop a
+ * host's services when the host itself is removed: only removing the record by
+ * name clears it. A crash, power cut or reset with a window open leaves exactly
+ * that, and a factory reset after it strands it: Home dials it over Thread and
+ * never uses BLE. The next boot registers this name again and removes it.
+ */
+#define SRP_COMM_KEY "srp/comm"
+static uint8_t s_stale_comm_random[8];
+static bool s_stale_comm;
+
 /**
  * Settings callback to read a 32-bit host ID from persistent storage. Reads exactly
  * sizeof(uint32_t) bytes into the output parameter, returning 0 on all paths.
@@ -430,6 +445,19 @@ static int host_id_read(const char *key, size_t len, settings_read_cb read_cb, v
 
 	if (len == sizeof(*out)) {
 		(void)read_cb(cb_arg, out, sizeof(*out));
+	}
+	return 0;
+}
+
+static int comm_read(const char *key, size_t len, settings_read_cb read_cb, void *cb_arg,
+		     void *param)
+{
+	ARG_UNUSED(key);
+	ARG_UNUSED(param);
+
+	if (len == sizeof(s_stale_comm_random) &&
+	    read_cb(cb_arg, s_stale_comm_random, len) == (ssize_t)len) {
+		s_stale_comm = true;
 	}
 	return 0;
 }
@@ -701,6 +729,23 @@ static void srp_release_removed_locked(const otSrpClientService *removed)
 	}
 }
 
+/* Off the callback, which runs inside the client: removing the last boot's
+ * window record once the server holds it again. */
+static void srp_stale_comm_fn(struct k_work *work)
+{
+	bool stale;
+
+	ARG_UNUSED(work);
+	openthread_mutex_lock();
+	stale = s_stale_comm;
+	s_stale_comm = false;
+	openthread_mutex_unlock();
+	if (stale && matter_thread_unadvertise_commissionable() == MATTER_OK) {
+		LOG_INF("SRP: removed the window record left before this boot");
+	}
+}
+static K_WORK_DEFINE(s_stale_comm_work, srp_stale_comm_fn);
+
 /** The SRP server's verdict, which otSrpClientAddService() cannot give. */
 static void srp_cb(otError err, const otSrpClientHostInfo *host, const otSrpClientService *services,
 		   const otSrpClientService *removed, void *ctx)
@@ -728,6 +773,10 @@ static void srp_cb(otError err, const otSrpClientHostInfo *host, const otSrpClie
 	} else {
 		LOG_ERR("SRP registration FAILED (%d) -- the commissioner cannot resolve this node",
 			err);
+	}
+	if (err == OT_ERROR_NONE && s_stale_comm && s_comm_state == SRP_COMM_ACTIVE &&
+	    s_comm_service.mState == OT_SRP_CLIENT_ITEM_STATE_REGISTERED) {
+		k_work_submit(&s_stale_comm_work);
 	}
 	if (!s_srp_resetting && srp_reconcile_locked(openthread_get_default_instance()) != MATTER_OK) {
 		LOG_ERR("queued SRP registrations could not be reconciled");
@@ -841,6 +890,7 @@ static void srp_host_name_build(otInstance *ot)
 	(void)snprintf(s_host_name, sizeof(s_host_name), "%02X%02X%02X%02X%02X%02X%02X%02X-%08X",
 		       eui.m8[0], eui.m8[1], eui.m8[2], eui.m8[3], eui.m8[4], eui.m8[5], eui.m8[6],
 		       eui.m8[7], (unsigned int)srp_host_id());
+	(void)settings_load_subtree_direct(SRP_COMM_KEY, comm_read, NULL);
 	s_host_name_ready = true;
 }
 
@@ -1095,6 +1145,14 @@ static int srp_reconcile_locked(otInstance *ot)
 			rc = one;
 		}
 	}
+	/* The last boot's window record, registered again only to be removed by
+	 * name; see SRP_COMM_KEY. */
+	if (s_stale_comm && !s_wanted_comm.used && s_comm_state == SRP_COMM_FREE) {
+		memcpy(s_wanted_comm.random, s_stale_comm_random, sizeof(s_wanted_comm.random));
+		s_wanted_comm.discriminator = CONFIG_TINYTALK_DISCRIMINATOR;
+		s_wanted_comm.port = MATTER_OPERATIONAL_PORT;
+		s_wanted_comm.used = true;
+	}
 	if (s_wanted_comm.used && s_comm_state == SRP_COMM_FREE) {
 		int one = srp_register_commissionable_locked(ot);
 
@@ -1146,6 +1204,7 @@ int matter_thread_advertise_commissionable(uint16_t discriminator, uint16_t port
 {
 	otInstance *ot = openthread_get_default_instance();
 	uint8_t random[sizeof(s_wanted_comm.random)];
+	bool adopted;
 	int rc;
 
 	if (ot == NULL) {
@@ -1157,14 +1216,21 @@ int matter_thread_advertise_commissionable(uint16_t discriminator, uint16_t port
 	}
 	srp_host_name_build(ot);
 	openthread_mutex_lock();
-	if (!s_wanted_comm.used) {
+	adopted = !s_wanted_comm.used;
+	if (adopted) {
 		memcpy(s_wanted_comm.random, random, sizeof(random));
 		s_wanted_comm.discriminator = discriminator;
 		s_wanted_comm.port = port;
 		s_wanted_comm.used = true;
 	}
+	/* A window opened while the last boot's record is still being cleared
+	 * takes that record over instead of racing its removal. */
+	s_stale_comm = false;
 	rc = srp_reconcile_locked(ot);
 	openthread_mutex_unlock();
+	if (adopted && settings_save_one(SRP_COMM_KEY, random, sizeof(random)) != 0) {
+		LOG_WRN("window record name not persisted");
+	}
 	return rc;
 }
 
@@ -1230,6 +1296,7 @@ int matter_thread_unadvertise_commissionable(void)
 		LOG_WRN("commissionable SRP removal refused (%d); retaining its owned slot", err);
 		return MATTER_E_STATE;
 	}
+	(void)settings_delete(SRP_COMM_KEY);
 	return MATTER_OK;
 }
 
