@@ -32,6 +32,7 @@
 
 #include <tinytalk/matter_commission.h>
 #include <tinytalk/matter_fab_store.h>
+#include <tinytalk/matter_thread.h>
 #include <tinytalk/tm_door_lock.h>
 
 #include "matter_ble_zephyr.h"
@@ -40,6 +41,7 @@ LOG_MODULE_REGISTER(door_lock, LOG_LEVEL_INF);
 
 #define WINDOW_S         900u
 #define FACTORY_RESET_MS 5000
+#define SRP_RETRACT_MS   2000
 
 static const struct matter_commission_config s_matter_cfg = {
 	.vendor_id = CONFIG_TINYTALK_VENDOR_ID,
@@ -144,6 +146,18 @@ static struct gpio_callback s_button_cb;
  * reboot ends here as a bare release, which is not a short press. */
 static int64_t s_pressed_at = -1;
 
+static void reboot_fn(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	sys_reboot(SYS_REBOOT_COLD);
+}
+static K_WORK_DELAYABLE_DEFINE(s_reboot_work, reboot_fn);
+
+/* The SRP records are retracted before the reboot: the border router otherwise
+ * keeps advertising them for their lease (2 h asked for), and Apple Home dials
+ * a stale commissionable record over Thread instead of using BLE. It connects
+ * and never writes C1 (2026-10-16, dns-sd -B _matterc._udp). LED0 stays lit
+ * while the removal goes out, so the reset is visible. */
 static void factory_reset_fn(struct k_work *work)
 {
 	ARG_UNUSED(work);
@@ -151,8 +165,12 @@ static void factory_reset_fn(struct k_work *work)
 		return;
 	}
 	LOG_WRN("button held: factory reset");
+	(void)gpio_pin_set_dt(&s_led, 1);
 	(void)matter_fab_erase();
-	sys_reboot(SYS_REBOOT_COLD);
+#if defined(CONFIG_TINYTALK_THREAD)
+	matter_thread_advertise_reset();
+#endif
+	(void)k_work_reschedule(&s_reboot_work, K_MSEC(SRP_RETRACT_MS));
 }
 static K_WORK_DELAYABLE_DEFINE(s_factory_reset_work, factory_reset_fn);
 
