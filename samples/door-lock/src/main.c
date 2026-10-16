@@ -200,6 +200,12 @@ static void on_button(const struct device *dev, struct gpio_callback *cb, uint32
 	ARG_UNUSED(dev);
 	ARG_UNUSED(cb);
 	ARG_UNUSED(pins);
+	/* Deaf while a factory reset retracts: a bounce or second press opened a
+	 * window whose _matterc record the wipe orphaned, and Home dialed it until
+	 * its 120 s lease ran out (2026-10-16). */
+	if (k_work_delayable_is_pending(&s_reboot_work)) {
+		return;
+	}
 	if (gpio_pin_get_dt(&s_button) == 1) {
 		s_pressed_at = k_uptime_get();
 		(void)k_work_reschedule(&s_factory_reset_work, K_MSEC(FACTORY_RESET_MS));
