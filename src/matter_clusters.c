@@ -1520,7 +1520,8 @@ static const uint32_t k_nc_resps[] = {
 static const uint32_t k_oc_cmds[] = {
 	MATTER_CMD_OC_ATTESTATION_REQUEST,     MATTER_CMD_OC_CERTIFICATE_CHAIN_REQUEST,
 	MATTER_CMD_OC_CSR_REQUEST,             MATTER_CMD_OC_ADD_NOC,
-	MATTER_CMD_OC_UPDATE_FABRIC_LABEL,     MATTER_CMD_OC_REMOVE_FABRIC,
+	MATTER_CMD_OC_UPDATE_NOC,              MATTER_CMD_OC_UPDATE_FABRIC_LABEL,
+	MATTER_CMD_OC_REMOVE_FABRIC,
 	MATTER_CMD_OC_ADD_TRUSTED_ROOT_CERTIFICATE,
 };
 static const uint32_t k_oc_resps[] = {
@@ -2613,6 +2614,37 @@ static __attribute__((noinline)) uint8_t opcred_command(struct matter_device_inf
 		/* SUCCESS means "a NOCResponse follows", not "the NOC was
 		 * accepted"; last_noc_status carries the verdict. */
 		return MATTER_IM_STATUS_SUCCESS;
+
+	case MATTER_CMD_OC_UPDATE_NOC: {
+		/*
+		 * Answered, not implemented. Replacing a live fabric's NOC needs
+		 * a CSRRequest with IsForUpdateNOC over CASE, a second
+		 * operational key held beside the first, and the swap committed
+		 * or rolled back with the fail-safe; this node issues no such
+		 * CSR. So, in the cluster's order: Administer, then the
+		 * fail-safe, then CASE, then MissingCsr in the NOCResponse,
+		 * which is what the spec answers when the prior CSRRequest was
+		 * not for UpdateNOC.
+		 */
+		size_t accessing_slot = fabric_slot_for_index(info, info->accessing_fabric_index);
+
+		if (info->accessing_fabric_index != 0u &&
+		    !fabric_slot_has_privilege(info, accessing_slot, MATTER_AC_PRIVILEGE_ADMINISTER,
+					       MATTER_ENDPOINT_ROOT,
+					       MATTER_CLUSTER_OPERATIONAL_CREDENTIALS)) {
+			return MATTER_IM_STATUS_UNSUPPORTED_ACCESS;
+		}
+		if (!info->attempt.active) {
+			return MATTER_IM_STATUS_FAILSAFE_REQUIRED;
+		}
+		if (info->accessing_fabric_index == 0u) {
+			return MATTER_IM_STATUS_INVALID_COMMAND;
+		}
+		info->last_noc_status = MATTER_NOC_STATUS_MISSING_CSR;
+		info->last_noc_index = 0u;
+		*response_command = MATTER_CMD_OC_NOC_RESPONSE;
+		return MATTER_IM_STATUS_SUCCESS;
+	}
 
 	case MATTER_CMD_OC_REMOVE_FABRIC: {
 		size_t i;

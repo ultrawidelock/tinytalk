@@ -474,7 +474,7 @@ static const struct want_globals k_want[] = {
 	{ MATTER_CLUSTER_GENERAL_COMMISSIONING, 2u, 0u, 3u, 3u },
 	{ MATTER_CLUSTER_NETWORK_COMMISSIONING, 2u, MATTER_NC_FEATURE_THREAD, 5u, 3u },
 	{ MATTER_CLUSTER_GENERAL_DIAGNOSTICS, 2u, 0u, 2u, 1u },
-	{ MATTER_CLUSTER_OPERATIONAL_CREDENTIALS, 2u, 0u, 7u, 4u },
+	{ MATTER_CLUSTER_OPERATIONAL_CREDENTIALS, 2u, 0u, 8u, 4u },
 	{ MATTER_CLUSTER_ADMIN_COMMISSIONING, 1u, 1u, 3u, 0u },
 	{ MATTER_CLUSTER_GROUP_KEY_MANAGEMENT, 2u, 0u, 4u, 2u },
 };
@@ -865,6 +865,51 @@ static void t_network_commissioning(void)
 	}
 }
 
+static void t_update_noc(void)
+{
+	/* NOCValue only: the answer never gets as far as reading it. */
+	static const uint8_t k_req[] = {0x15u, 0x30u, 0x00u, 0x01u, 0x00u, 0x18u};
+	struct matter_device_info info;
+	struct matter_im_server srv;
+	struct matter_tlv_writer w;
+	struct matter_tlv_reader r;
+	uint8_t out[64];
+	uint32_t response;
+	uint64_t v = 0xFFu;
+
+	t_group("UpdateNOC answers MissingCsr, in the cluster's order");
+	admin_info(&info);
+	matter_clusters_init(&srv, &info);
+	T_OK("listed as accepted",
+	     srv.status(srv.ctx, MATTER_ENDPOINT_ROOT, MATTER_CLUSTER_OPERATIONAL_CREDENTIALS,
+			MATTER_ATTR_ACCEPTED_CMD_LIST) == MATTER_IM_STATUS_SUCCESS);
+	T_EQ("without a fail-safe: FAILSAFE_REQUIRED",
+	     root_invoke(&srv, MATTER_CLUSTER_OPERATIONAL_CREDENTIALS, MATTER_CMD_OC_UPDATE_NOC,
+			 k_req, sizeof(k_req), &response),
+	     MATTER_IM_STATUS_FAILSAFE_REQUIRED);
+	info.attempt.active = true;
+	info.accessing_fabric_index = 0u;
+	T_EQ("over PASE: INVALID_COMMAND",
+	     root_invoke(&srv, MATTER_CLUSTER_OPERATIONAL_CREDENTIALS, MATTER_CMD_OC_UPDATE_NOC,
+			 k_req, sizeof(k_req), &response),
+	     MATTER_IM_STATUS_INVALID_COMMAND);
+	info.accessing_fabric_index = 1u;
+	T_EQ("over CASE: a NOCResponse",
+	     root_invoke(&srv, MATTER_CLUSTER_OPERATIONAL_CREDENTIALS, MATTER_CMD_OC_UPDATE_NOC,
+			 k_req, sizeof(k_req), &response),
+	     MATTER_IM_STATUS_SUCCESS);
+	T_EQ("NOCResponse", (long)response, (long)MATTER_CMD_OC_NOC_RESPONSE);
+	matter_tlv_writer_init(&w, out, sizeof(out));
+	srv.command_fields(srv.ctx, MATTER_ENDPOINT_ROOT, MATTER_CLUSTER_OPERATIONAL_CREDENTIALS,
+			   response, &w, MATTER_TLV_ANON);
+	matter_tlv_reader_init(&r, out, w.len);
+	T_OK("StatusCode MissingCsr and no FabricIndex",
+	     matter_tlv_next(&r) == MATTER_OK && matter_tlv_enter(&r) == MATTER_OK &&
+		     matter_tlv_next(&r) == MATTER_OK && matter_tlv_get_u64(&r, &v) == MATTER_OK &&
+		     v == MATTER_NOC_STATUS_MISSING_CSR && matter_tlv_next(&r) == MATTER_END);
+	info.attempt.active = false;
+}
+
 void test_root_clusters(void)
 {
 	t_general_diagnostics();
@@ -872,4 +917,5 @@ void test_root_clusters(void)
 	t_globals();
 	t_unique_id();
 	t_network_commissioning();
+	t_update_noc();
 }

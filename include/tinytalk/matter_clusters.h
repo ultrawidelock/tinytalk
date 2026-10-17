@@ -334,6 +334,7 @@ void matter_clusters_unique_id_boot(struct matter_device_info *info);
 #define MATTER_CMD_OC_CSR_REQUEST                  0x0004u
 #define MATTER_CMD_OC_CSR_RESPONSE                 0x0005u
 #define MATTER_CMD_OC_ADD_NOC                      0x0006u
+#define MATTER_CMD_OC_UPDATE_NOC                   0x0007u
 #define MATTER_CMD_OC_NOC_RESPONSE                 0x0008u
 #define MATTER_CMD_OC_UPDATE_FABRIC_LABEL          0x0009u
 #define MATTER_CMD_OC_REMOVE_FABRIC                0x000Au
