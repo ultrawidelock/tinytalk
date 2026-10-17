@@ -22,6 +22,10 @@
 
 LOG_MODULE_REGISTER(matter_thread, CONFIG_TINYTALK_THREAD_LOG_LEVEL);
 
+/* matter_thread_on_datagram(), CASE included, runs on OpenThread's thread. */
+BUILD_ASSERT(CONFIG_OPENTHREAD_THREAD_STACK_SIZE >= CONFIG_TINYTALK_THREAD_RX_STACK_SIZE,
+	     "OpenThread's thread is smaller than CONFIG_TINYTALK_THREAD_RX_STACK_SIZE");
+
 /* Every call below is either OpenThread's own API or one of the four
  * openthread_*() helpers that the standalone module provides, so the Zephyr
  * L2 was never what this needed. */

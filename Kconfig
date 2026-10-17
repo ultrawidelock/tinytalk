@@ -143,6 +143,23 @@ config TINYTALK_HAS_THREAD
 	help
 	  A matter_thread.h provider is linked.
 
+config TINYTALK_THREAD_RX_STACK_SIZE
+	int "Stack the matter_thread.h provider's receive thread needs"
+	default 5376 if TINYPSA
+	default 4096
+	help
+	  matter_thread_on_datagram() runs on the matter_thread.h provider's
+	  own receive thread (OpenThread's thread, tinygrid's thread), CASE
+	  and its signature checks included. This is the one place that size
+	  is decided: a provider sizes that thread from it, and fails the
+	  build when its stack is smaller.
+
+	  On tinypsa's portable P-256 the path peaked at 3,944 B on
+	  OpenThread's thread and at 4,272 B on tinygrid's (door-lock,
+	  decawave_dwm3001cdk, two-fabric Apple Home add, 2026-10-17);
+	  5,376 B keeps more than 1 KB above the larger. 4,096 B is what the
+	  nrf_security builds pass Apple Home on; their peak is not measured.
+
 config TINYTALK_BLE
 	bool "BLE commissioning: the 0xFFF6 service over BTP"
 	# The framing itself is in the core (src/) and has no Zephyr
