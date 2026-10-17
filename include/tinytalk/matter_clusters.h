@@ -208,6 +208,23 @@ struct matter_event_rec {
 #define MATTER_SERIAL_NUMBER_MAX 32u
 
 /*
+ * Basic Information UniqueID: 8 random bytes as 16 uppercase hex characters,
+ * which is what connectedhomeip draws when its storage is empty
+ * (GenericConfigurationManagerImpl.ipp:551-555); the attribute allows 32.
+ */
+#define MATTER_UNIQUE_ID_BYTES 8u
+#define MATTER_UNIQUE_ID_LEN   (2u * MATTER_UNIQUE_ID_BYTES)
+
+/**
+ * Load UniqueID from tm_kv into @p info, or draw and store a new one when
+ * storage holds none. Called once per boot by matter_commission_init(), after
+ * storage is up. A settings wipe removes it, so the next boot is a new
+ * identity, as a connectedhomeip factory reset is.
+ */
+struct matter_device_info;
+void matter_clusters_unique_id_boot(struct matter_device_info *info);
+
+/*
  * What this node reports about itself.
  *
  * DataModelRevision and SpecificationVersion are the 1.2 values, not the SDK's
@@ -429,6 +446,8 @@ struct matter_device_info {
 	const char *software_version_str;
 	/** Stable, per-device serial supplied by the hardware port. */
 	char serial_number[MATTER_SERIAL_NUMBER_MAX + 1u];
+	/** Basic Information UniqueID; see matter_clusters_unique_id_boot(). */
+	char unique_id[MATTER_UNIQUE_ID_LEN + 1u];
 #ifndef TM_NO_EVENTS
 	/**
 	 * The events waiting to be reported, oldest first.

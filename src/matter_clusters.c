@@ -9,6 +9,7 @@
  * attribute on a part where flash is the binding constraint.
  */
 #include <tinytalk/matter_clusters.h>
+#include <tinytalk/tm_kv.h>
 #include <tinytalk/tm_platform.h>
 
 #include <stddef.h>
@@ -1089,7 +1090,6 @@ static void attr_value(void *ctx, uint16_t endpoint, uint32_t cluster, uint32_t 
 			return;
 		}
 		case MATTER_ATTR_BASIC_SERIAL_NUMBER:
-		case MATTER_ATTR_BASIC_UNIQUE_ID:
 			{
 				const char *serial = info->serial_number[0] != '\0'
 							   ? info->serial_number
@@ -1097,6 +1097,15 @@ static void attr_value(void *ctx, uint16_t endpoint, uint32_t cluster, uint32_t 
 
 				(void)matter_tlv_put_utf8(w, tag, serial, strlen(serial));
 			}
+			return;
+		case MATTER_ATTR_BASIC_UNIQUE_ID:
+			/*
+			 * Random per identity, not derived from the device id as
+			 * the serial is: a controller may tie a newly paired node
+			 * to an older accessory with the same UniqueID, so a
+			 * factory reset has to yield a new one.
+			 */
+			(void)matter_tlv_put_utf8(w, tag, info->unique_id, strlen(info->unique_id));
 			return;
 		case MATTER_ATTR_BASIC_CAPABILITY_MINIMA:
 			(void)matter_tlv_start_container(w, tag, MATTER_TLV_STRUCTURE);
@@ -1529,6 +1538,31 @@ static const struct tm_cluster k_legacy_meta[] = {
 #endif
 	  .revision = 1u },
 };
+
+void matter_clusters_unique_id_boot(struct matter_device_info *info)
+{
+	static const char k_hex[] = "0123456789ABCDEF";
+	uint8_t raw[MATTER_UNIQUE_ID_BYTES];
+	size_t len = MATTER_UNIQUE_ID_LEN;
+
+	if (tm_kv_get(TM_KV_KEY_MATTER_UNIQUE_ID, info->unique_id, &len) == TM_KV_OK &&
+	    len == MATTER_UNIQUE_ID_LEN) {
+		info->unique_id[MATTER_UNIQUE_ID_LEN] = '\0';
+		return;
+	}
+	if (tm_random(raw, sizeof(raw)) != 0) {
+		/* No entropy: report nothing rather than a guessable id, and
+		 * try again at the next boot. */
+		info->unique_id[0] = '\0';
+		return;
+	}
+	for (size_t i = 0u; i < sizeof(raw); i++) {
+		info->unique_id[2u * i] = k_hex[raw[i] >> 4];
+		info->unique_id[2u * i + 1u] = k_hex[raw[i] & 0x0Fu];
+	}
+	info->unique_id[MATTER_UNIQUE_ID_LEN] = '\0';
+	(void)tm_kv_set(TM_KV_KEY_MATTER_UNIQUE_ID, info->unique_id, MATTER_UNIQUE_ID_LEN);
+}
 
 static const struct tm_cluster *legacy_meta(uint32_t cluster)
 {

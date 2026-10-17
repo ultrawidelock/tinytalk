@@ -573,6 +573,12 @@ void test_matter_clusters(void)
 		T_EQ("serial length matches", value_len, sizeof(serial) - 1u);
 		T_OK("serial value matches", memcmp(value, serial, value_len) == 0);
 
+		/*
+		 * UniqueID is NOT the hardware identity any more: it is drawn at
+		 * random once per identity (matter_clusters_unique_id_boot()),
+		 * so a factory reset yields a new one. See test_root_clusters.c.
+		 */
+		matter_clusters_unique_id_boot(&info);
 		matter_tlv_writer_init(&w, out, sizeof(out));
 		srv.value(srv.ctx, MATTER_ENDPOINT_ROOT, MATTER_CLUSTER_BASIC_INFORMATION,
 			  MATTER_ATTR_BASIC_UNIQUE_ID, false, &w, MATTER_TLV_ANON);
@@ -581,9 +587,8 @@ void test_matter_clusters(void)
 		value_len = 0u;
 		T_OK("unique id decodes", matter_tlv_next(&r) == 0 &&
 					  matter_tlv_get_utf8(&r, &value, &value_len) == 0);
-		T_EQ("unique id length matches", value_len, sizeof(serial) - 1u);
-		T_OK("unique id uses the same hardware identity",
-		     memcmp(value, serial, value_len) == 0);
+		T_EQ("unique id is 16 characters", value_len, (size_t)MATTER_UNIQUE_ID_LEN);
+		T_OK("and not the serial", memcmp(value, serial, value_len) != 0);
 	}
 
 	t_group("Basic Information names and versions come from the application");

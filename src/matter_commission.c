@@ -3916,7 +3916,7 @@ int matter_commission_init(const struct matter_commission_config *cfg)
 	}
 
 	/*
-	 * Stable per-board Matter identifier. Derived from tm_device_id()
+	 * Stable per-board serial number. Derived from tm_device_id()
 	 * rather than drawn from the RNG, because nothing on the Matter
 	 * side of this node is persisted yet (there is no settings handler in
 	 * the core at all) and a value regenerated at every boot would make
@@ -3965,6 +3965,7 @@ int matter_commission_init(const struct matter_commission_config *cfg)
 	 */
 	(void)tm_kv_init();
 	matter_general_diagnostics_boot();
+	matter_clusters_unique_id_boot(&s_info);
 	for (uint8_t i = 0u; matter_clusters_endpoint_at(i) != NULL; i++) {
 		const struct tm_endpoint *ep = matter_clusters_endpoint_at(i);
 

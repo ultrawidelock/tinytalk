@@ -631,9 +631,86 @@ static void t_globals(void)
 	}
 }
 
+/* Basic Information UniqueID as a string, into @p out. */
+static size_t read_unique_id(struct matter_im_server *srv, char *out, size_t cap)
+{
+	struct matter_tlv_reader r;
+	uint8_t buf[64];
+	const char *str = NULL;
+	size_t len = 0u;
+	size_t n = read_root(srv, MATTER_CLUSTER_BASIC_INFORMATION, MATTER_ATTR_BASIC_UNIQUE_ID,
+			     buf, sizeof(buf));
+
+	matter_tlv_reader_init(&r, buf, n);
+	if (matter_tlv_next(&r) != MATTER_OK || matter_tlv_get_utf8(&r, &str, &len) != MATTER_OK ||
+	    len >= cap) {
+		return 0u;
+	}
+	memcpy(out, str, len);
+	out[len] = '\0';
+	return len;
+}
+
+static bool upper_hex(const char *s, size_t len)
+{
+	for (size_t i = 0u; i < len; i++) {
+		if (!((s[i] >= '0' && s[i] <= '9') || (s[i] >= 'A' && s[i] <= 'F'))) {
+			return false;
+		}
+	}
+	return true;
+}
+
+static void t_unique_id(void)
+{
+	struct matter_device_info info;
+	struct matter_im_server srv;
+	char first[40];
+	char again[40];
+	char fresh[40];
+	char serial[40];
+
+	t_group("UniqueID is random per identity and survives a reboot");
+	admin_info(&info);
+	matter_clusters_init(&srv, &info);
+	(void)tm_kv_erase_all();
+
+	matter_clusters_unique_id_boot(&info);
+	T_EQ("16 characters", (long)read_unique_id(&srv, first, sizeof(first)), 16L);
+	T_OK("uppercase hex", upper_hex(first, 16u));
+
+	memset(info.unique_id, 0, sizeof(info.unique_id));
+	matter_clusters_unique_id_boot(&info);
+	T_EQ("read back after a reboot", (long)read_unique_id(&srv, again, sizeof(again)), 16L);
+	T_OK("the same id", strcmp(first, again) == 0);
+
+	(void)tm_kv_erase_all();
+	memset(info.unique_id, 0, sizeof(info.unique_id));
+	matter_clusters_unique_id_boot(&info);
+	T_EQ("drawn again after a wipe", (long)read_unique_id(&srv, fresh, sizeof(fresh)), 16L);
+	T_OK("a new id", strcmp(first, fresh) != 0);
+
+	memcpy(info.serial_number, "TT-0123456789ABCDEF", 20u);
+	{
+		struct matter_tlv_reader r;
+		uint8_t buf[64];
+		const char *str = NULL;
+		size_t len = 0u;
+		size_t n = read_root(&srv, MATTER_CLUSTER_BASIC_INFORMATION,
+				     MATTER_ATTR_BASIC_SERIAL_NUMBER, buf, sizeof(buf));
+
+		matter_tlv_reader_init(&r, buf, n);
+		T_OK("SerialNumber stays the serial",
+		     matter_tlv_next(&r) == MATTER_OK &&
+			     matter_tlv_get_utf8(&r, &str, &len) == MATTER_OK && len < sizeof(serial) &&
+			     memcmp(str, "TT-0123456789ABCDEF", len) == 0 && len == 19u);
+	}
+}
+
 void test_root_clusters(void)
 {
 	t_general_diagnostics();
 	t_group_keys();
 	t_globals();
+	t_unique_id();
 }
