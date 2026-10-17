@@ -7,7 +7,7 @@ over BLE, and it runs over Thread. It is small enough for an nRF52833 (512 KB
 flash, 128 KB RAM). It is not a certified Matter stack.
 
 The whole node, sessions and commissioning included, is in `src/` and needs
-no OS, radio stack or crypto library. A port provides 47 functions: a lock,
+no OS, radio stack or crypto library. A port provides 48 functions: a lock,
 deferred work, a clock, storage, BLE and Thread transports, and the crypto
 (see PORTING.md). Zephyr with OpenThread is the first port, in `ports/zephyr/`.
 
@@ -82,7 +82,7 @@ tests/host/           unit tests and the host port
 ```
 make test     # host unit tests
 make asan     # the same tests under AddressSanitizer and UndefinedBehaviorSanitizer
-make seams    # the 47 symbols the node expects a port to provide
+make seams    # the 48 symbols the node expects a port to provide
 ```
 
 On a machine where `cc` or `nm` is not the compiler you want, pass both:

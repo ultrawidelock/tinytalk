@@ -271,7 +271,74 @@ int matter_thread_interface(struct matter_thread_iface *out)
 	     addr != NULL && out->n_addrs < MATTER_THREAD_IFACE_ADDRS_MAX; addr = addr->mNext) {
 		memcpy(out->addrs[out->n_addrs++], addr->mAddress.mFields.m8, 16u);
 	}
+	out->thread_version = otThreadGetVersion();
 	openthread_mutex_unlock();
+	return MATTER_OK;
+}
+
+/* The scan in progress: where its results go, and the signal that it ended.
+ * Written by OpenThread's callback, on its thread, and read once it has. */
+static K_SEM_DEFINE(s_scan_done, 0, 1);
+static struct matter_thread_scan_result *s_scan_out;
+static uint8_t s_scan_cap;
+static uint8_t s_scan_count;
+
+static void scan_cb(otActiveScanResult *result, void *context)
+{
+	struct matter_thread_scan_result *r;
+
+	ARG_UNUSED(context);
+	if (result == NULL) {
+		k_sem_give(&s_scan_done);
+		return;
+	}
+	/* Beacons from anything that is not a Thread network carry no name. */
+	if (s_scan_count >= s_scan_cap || result->mNetworkName.m8[0] == '\0') {
+		return;
+	}
+	r = &s_scan_out[s_scan_count++];
+	memset(r, 0, sizeof(*r));
+	memcpy(r->ext_addr, result->mExtAddress.m8, sizeof(r->ext_addr));
+	memcpy(r->xpanid, result->mExtendedPanId.m8, sizeof(r->xpanid));
+	memcpy(r->name, result->mNetworkName.m8, sizeof(r->name) - 1u);
+	r->pan_id = result->mPanId;
+	r->channel = result->mChannel;
+	r->version = result->mVersion;
+	r->rssi = result->mRssi;
+	r->lqi = result->mLqi;
+}
+
+/* Every channel at OpenThread's default dwell: about 16 x 300 ms. */
+#define SCAN_TIMEOUT_MS 10000
+
+int matter_thread_scan(struct matter_thread_scan_result *out, uint8_t cap, uint8_t *n)
+{
+	otInstance *ot = openthread_get_default_instance();
+	otError err;
+
+	*n = 0u;
+	/* On OpenThread's own thread the callback could never run while this
+	 * waits for it: refuse rather than deadlock. */
+	if (ot == NULL || out == NULL || k_current_get() == openthread_thread_id_get()) {
+		return MATTER_E_STATE;
+	}
+	k_sem_reset(&s_scan_done);
+	s_scan_out = out;
+	s_scan_cap = cap;
+	s_scan_count = 0u;
+	openthread_mutex_lock();
+	err = otLinkActiveScan(ot, 0u, 0u, scan_cb, NULL);
+	openthread_mutex_unlock();
+	if (err != OT_ERROR_NONE) {
+		LOG_WRN("Thread scan not started (%d)", err);
+		return MATTER_E_STATE;
+	}
+	if (k_sem_take(&s_scan_done, K_MSEC(SCAN_TIMEOUT_MS)) != 0) {
+		LOG_WRN("Thread scan did not finish in %u ms", (unsigned int)SCAN_TIMEOUT_MS);
+		return MATTER_E_STATE;
+	}
+	*n = s_scan_count;
+	LOG_INF("Thread scan: %u network(s)", (unsigned int)s_scan_count);
 	return MATTER_OK;
 }
 

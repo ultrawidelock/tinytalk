@@ -46,6 +46,10 @@ extern int g_thread_unadvertise_calls;
 extern char g_thread_last_unadvertised[64];
 /** What matter_thread_interface() reports; zeroed by the reset. */
 extern struct matter_thread_iface g_thread_iface;
+/** What matter_thread_scan() reports, and its return value. */
+extern struct matter_thread_scan_result g_thread_scan[MATTER_THREAD_SCAN_MAX];
+extern uint8_t g_thread_scan_n;
+extern int g_thread_scan_rc;
 
 void test_matter_thread_stub_reset(void);
 

@@ -266,6 +266,9 @@ struct matter_thread_iface {
 	uint8_t ext_addr[8];
 	uint8_t n_addrs;
 	uint8_t addrs[MATTER_THREAD_IFACE_ADDRS_MAX][16];
+	/** The stack's Thread version, as NetworkCommissioning ThreadVersion
+	 *  reports it: 2 for Thread 1.1, 3 for 1.2, 4 for 1.3, 5 for 1.4. */
+	uint16_t thread_version;
 };
 
 /**
@@ -277,6 +280,34 @@ struct matter_thread_iface {
  * @return MATTER_OK, or MATTER_E_STATE with no Thread stack, @p out zeroed.
  */
 int matter_thread_interface(struct matter_thread_iface *out);
+
+/** How many networks NetworkCommissioning's ScanNetworks reports. */
+#define MATTER_THREAD_SCAN_MAX 4u
+
+/** One network an active scan heard, as ThreadInterfaceScanResultStruct. */
+struct matter_thread_scan_result {
+	uint8_t ext_addr[8];
+	uint8_t xpanid[8];
+	char name[17];
+	uint16_t pan_id;
+	uint8_t channel;
+	uint8_t version;
+	int8_t rssi;
+	uint8_t lqi;
+};
+
+/**
+ * Run an IEEE 802.15.4 active scan on every channel and report what answered.
+ * Added in MATTER_THREAD_API 2.
+ *
+ * Blocks until the scan ends, which takes seconds; the caller is answering a
+ * ScanNetworks a commissioner is waiting on. Refused with MATTER_E_STATE where
+ * blocking would stall the Thread stack itself, its receive callback included.
+ *
+ * @param out at least @p cap results; @p n receives how many were filled.
+ * @return MATTER_OK, or MATTER_E_STATE when no scan could run.
+ */
+int matter_thread_scan(struct matter_thread_scan_result *out, uint8_t cap, uint8_t *n);
 
 /**
  * Accept one reply while the inbound OpenThread callback is still current.

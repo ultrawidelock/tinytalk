@@ -17,6 +17,7 @@ matter_thread_attached_to
 matter_thread_clear
 matter_thread_interface
 matter_thread_peer_current
+matter_thread_scan
 matter_thread_send_to
 matter_thread_start
 matter_thread_unadvertise

@@ -281,13 +281,20 @@ void matter_clusters_unique_id_boot(struct matter_device_info *info);
 #define MATTER_ATTR_NC_CONNECT_MAX_TIME_S     0x0003u
 #define MATTER_ATTR_NC_INTERFACE_ENABLED      0x0004u
 #define MATTER_ATTR_NC_LAST_NETWORKING_STATUS 0x0005u
+#define MATTER_ATTR_NC_LAST_NETWORK_ID        0x0006u
+#define MATTER_ATTR_NC_LAST_CONNECT_ERROR     0x0007u
+#define MATTER_ATTR_NC_SUPPORTED_THREAD_FEAT  0x0009u
+#define MATTER_ATTR_NC_THREAD_VERSION         0x000Au
 
 /* NetworkCommissioning commands (MTRClusterConstants.h:6296-6300). */
+#define MATTER_CMD_NC_SCAN_NETWORKS                0x0000u
+#define MATTER_CMD_NC_SCAN_NETWORKS_RESPONSE       0x0001u
 #define MATTER_CMD_NC_ADD_OR_UPDATE_THREAD_NETWORK 0x0003u
 #define MATTER_CMD_NC_REMOVE_NETWORK               0x0004u
 #define MATTER_CMD_NC_NETWORK_CONFIG_RESPONSE      0x0005u
 #define MATTER_CMD_NC_CONNECT_NETWORK              0x0006u
 #define MATTER_CMD_NC_CONNECT_NETWORK_RESPONSE     0x0007u
+#define MATTER_CMD_NC_REORDER_NETWORK              0x0008u
 
 /** NetworkCommissioning Feature bits (python clusters/Objects.py, Feature). */
 #define MATTER_NC_FEATURE_THREAD 0x2u
@@ -298,6 +305,7 @@ void matter_clusters_unique_id_boot(struct matter_device_info *info);
 #define MATTER_NC_STATUS_BOUNDS_EXCEEDED          0x02u
 #define MATTER_NC_STATUS_NETWORK_ID_NOT_FOUND    0x03u
 #define MATTER_NC_STATUS_OTHER_CONNECTION_FAILUR 0x09u
+#define MATTER_NC_STATUS_UNKNOWN_ERROR           0x0Cu
 
 /**
  * A Thread operational dataset, kSizeOperationalDataset
@@ -610,6 +618,9 @@ struct matter_device_info {
 	bool thread_started;
 	/** NetworkCommissioningStatusEnum from the last network command. */
 	uint8_t last_network_status;
+	/** LastNetworkID: the network the last ConnectNetwork named. */
+	uint8_t last_network_id[MATTER_THREAD_XPANID_LEN];
+	bool have_last_network_id;
 	/** Operational node id of the CASE peer serving the current request. */
 	uint64_t accessing_node_id;
 

@@ -25,6 +25,9 @@ int g_thread_advertise_calls;
 int g_thread_unadvertise_calls;
 char g_thread_last_unadvertised[64];
 struct matter_thread_iface g_thread_iface;
+struct matter_thread_scan_result g_thread_scan[MATTER_THREAD_SCAN_MAX];
+uint8_t g_thread_scan_n;
+int g_thread_scan_rc;
 
 void test_matter_thread_stub_reset(void)
 {
@@ -46,6 +49,18 @@ void test_matter_thread_stub_reset(void)
 	g_thread_unadvertise_calls = 0;
 	memset(g_thread_last_unadvertised, 0, sizeof(g_thread_last_unadvertised));
 	memset(&g_thread_iface, 0, sizeof(g_thread_iface));
+	memset(g_thread_scan, 0, sizeof(g_thread_scan));
+	g_thread_scan_n = 0u;
+	g_thread_scan_rc = MATTER_OK;
+}
+
+int matter_thread_scan(struct matter_thread_scan_result *out, uint8_t cap, uint8_t *n)
+{
+	uint8_t k = g_thread_scan_n < cap ? g_thread_scan_n : cap;
+
+	memcpy(out, g_thread_scan, (size_t)k * sizeof(out[0]));
+	*n = g_thread_scan_rc == MATTER_OK ? k : 0u;
+	return g_thread_scan_rc;
 }
 
 int matter_thread_interface(struct matter_thread_iface *out)

@@ -1168,6 +1168,35 @@ static void attr_value(void *ctx, uint16_t endpoint, uint32_t cluster, uint32_t 
 		case MATTER_ATTR_NC_LAST_NETWORKING_STATUS:
 			(void)matter_tlv_put_u64(w, tag, info->last_network_status);
 			return;
+		case MATTER_ATTR_NC_LAST_NETWORK_ID:
+			/* Null until a ConnectNetwork names a network. */
+			if (info->have_last_network_id) {
+				(void)matter_tlv_put_bytes(w, tag, info->last_network_id,
+							   MATTER_THREAD_XPANID_LEN);
+			} else {
+				(void)matter_tlv_put_null(w, tag);
+			}
+			return;
+		case MATTER_ATTR_NC_LAST_CONNECT_ERROR:
+			/* Null: ConnectNetworkResponse's ErrorValue is null too, as
+			 * no failure here carries a stack-specific code. */
+			(void)matter_tlv_put_null(w, tag);
+			return;
+		case MATTER_ATTR_NC_SUPPORTED_THREAD_FEAT:
+			/* None of ThreadCapabilitiesBitmap: an always-listening
+			 * minimal end device is no border router, router, sleepy
+			 * or full device. */
+			(void)matter_tlv_put_u64(w, tag, 0u);
+			return;
+		case MATTER_ATTR_NC_THREAD_VERSION: {
+			struct matter_thread_iface iface;
+
+			if (matter_thread_interface(&iface) != MATTER_OK) {
+				iface.thread_version = 0u;
+			}
+			(void)matter_tlv_put_u64(w, tag, iface.thread_version);
+			return;
+		}
 		default:
 			return;
 		}
@@ -1457,6 +1486,8 @@ static const uint32_t k_nc_attrs[] = {
 	MATTER_ATTR_NC_MAX_NETWORKS,      MATTER_ATTR_NC_NETWORKS,
 	MATTER_ATTR_NC_SCAN_MAX_TIME_S,   MATTER_ATTR_NC_CONNECT_MAX_TIME_S,
 	MATTER_ATTR_NC_INTERFACE_ENABLED, MATTER_ATTR_NC_LAST_NETWORKING_STATUS,
+	MATTER_ATTR_NC_LAST_NETWORK_ID,   MATTER_ATTR_NC_LAST_CONNECT_ERROR,
+	MATTER_ATTR_NC_SUPPORTED_THREAD_FEAT, MATTER_ATTR_NC_THREAD_VERSION,
 	GLOBAL_ATTRS,
 };
 
@@ -1475,11 +1506,14 @@ static const uint32_t k_gc_resps[] = {
 	MATTER_CMD_GC_COMMISSIONING_COMPLETE_RESPONSE,
 };
 static const uint32_t k_nc_cmds[] = {
+	MATTER_CMD_NC_SCAN_NETWORKS,
 	MATTER_CMD_NC_ADD_OR_UPDATE_THREAD_NETWORK,
 	MATTER_CMD_NC_REMOVE_NETWORK,
 	MATTER_CMD_NC_CONNECT_NETWORK,
+	MATTER_CMD_NC_REORDER_NETWORK,
 };
 static const uint32_t k_nc_resps[] = {
+	MATTER_CMD_NC_SCAN_NETWORKS_RESPONSE,
 	MATTER_CMD_NC_NETWORK_CONFIG_RESPONSE,
 	MATTER_CMD_NC_CONNECT_NETWORK_RESPONSE,
 };
@@ -1760,6 +1794,22 @@ static bool field_utf8(const struct matter_im_invoke *inv, uint8_t tag, const ch
 #define TAG_NCRESP_INDEX       2u
 #define TAG_CONNRESP_STATUS    0u
 #define TAG_CONNRESP_ERROR     2u
+#define TAG_REORDER_INDEX      1u
+#define TAG_SCANRESP_STATUS    0u
+#define TAG_SCANRESP_THREAD    3u
+
+/* What the last ScanNetworks heard, kept for its response. */
+static struct matter_thread_scan_result s_scan[MATTER_THREAD_SCAN_MAX];
+static uint8_t s_scan_n;
+
+/* The network Networks lists, if any: the candidate, else the committed one. */
+static const uint8_t *listed_network(const struct matter_device_info *info)
+{
+	if (info->attempt.have_thread_candidate) {
+		return info->attempt.thread_xpanid;
+	}
+	return info->have_thread_xpanid ? info->thread_xpanid : NULL;
+}
 
 /**
  * Thread meshcop TLV type for the Extended PAN ID (Thread 1.3 spec, 8.10.1.5).
@@ -2069,6 +2119,28 @@ static uint8_t network_command(struct matter_device_info *info, const struct mat
 	size_t v_len = 0u;
 	uint8_t xpanid[MATTER_THREAD_XPANID_LEN];
 
+	/*
+	 * ScanNetworks needs no fail-safe, only Administer, which a PASE
+	 * session has implicitly. The scan itself is the port's
+	 * (matter_thread_scan()); where it cannot run the answer is
+	 * UnknownError, which a commissioner reads as "no results".
+	 */
+	if (inv->command == MATTER_CMD_NC_SCAN_NETWORKS) {
+		if (info->accessing_fabric_index != 0u &&
+		    !fabric_slot_has_privilege(info,
+					       fabric_slot_for_index(info, info->accessing_fabric_index),
+					       MATTER_AC_PRIVILEGE_ADMINISTER, MATTER_ENDPOINT_ROOT,
+					       MATTER_CLUSTER_NETWORK_COMMISSIONING)) {
+			return MATTER_IM_STATUS_UNSUPPORTED_ACCESS;
+		}
+		*response_command = MATTER_CMD_NC_SCAN_NETWORKS_RESPONSE;
+		s_scan_n = 0u;
+		info->last_network_status =
+			matter_thread_scan(s_scan, MATTER_THREAD_SCAN_MAX, &s_scan_n) == MATTER_OK
+				? MATTER_NC_STATUS_SUCCESS
+				: MATTER_NC_STATUS_UNKNOWN_ERROR;
+		return MATTER_IM_STATUS_SUCCESS;
+	}
 	if (!info->attempt.active) {
 		return MATTER_IM_STATUS_FAILSAFE_REQUIRED;
 	}
@@ -2108,6 +2180,13 @@ static uint8_t network_command(struct matter_device_info *info, const struct mat
 
 	case MATTER_CMD_NC_CONNECT_NETWORK:
 		*response_command = MATTER_CMD_NC_CONNECT_NETWORK_RESPONSE;
+		/* LastNetworkID names the network this attempt was for, whether
+		 * or not it succeeds. */
+		if (field_bytes(inv, TAG_CONNECT_NETWORK_ID, &v, &v_len) &&
+		    v_len == MATTER_THREAD_XPANID_LEN) {
+			memcpy(info->last_network_id, v, MATTER_THREAD_XPANID_LEN);
+			info->have_last_network_id = true;
+		}
 		if (!field_bytes(inv, TAG_CONNECT_NETWORK_ID, &v, &v_len) ||
 		    v_len != MATTER_THREAD_XPANID_LEN || !info->attempt.have_thread_candidate ||
 		    memcmp(v, info->attempt.thread_xpanid, MATTER_THREAD_XPANID_LEN) != 0) {
@@ -2173,6 +2252,28 @@ static uint8_t network_command(struct matter_device_info *info, const struct mat
 		info->last_network_status = MATTER_NC_STATUS_SUCCESS;
 		return MATTER_IM_STATUS_SUCCESS;
 
+	case MATTER_CMD_NC_REORDER_NETWORK: {
+		/* One network at most, so the only legal reorder moves it to
+		 * index 0, where it already is. */
+		const uint8_t *listed = listed_network(info);
+		uint64_t index = 0u;
+
+		*response_command = MATTER_CMD_NC_NETWORK_CONFIG_RESPONSE;
+		if (!field_bytes(inv, TAG_CONNECT_NETWORK_ID, &v, &v_len) ||
+		    !field_u64(inv, TAG_REORDER_INDEX, &index)) {
+			return MATTER_IM_STATUS_INVALID_COMMAND;
+		}
+		if (listed == NULL || v_len != MATTER_THREAD_XPANID_LEN ||
+		    memcmp(v, listed, MATTER_THREAD_XPANID_LEN) != 0) {
+			info->last_network_status = MATTER_NC_STATUS_NETWORK_ID_NOT_FOUND;
+		} else if (index != 0u) {
+			info->last_network_status = MATTER_NC_STATUS_OUT_OF_RANGE;
+		} else {
+			info->last_network_status = MATTER_NC_STATUS_SUCCESS;
+		}
+		return MATTER_IM_STATUS_SUCCESS;
+	}
+
 	default:
 		return MATTER_IM_STATUS_UNSUPPORTED_COMMAND;
 	}
@@ -2184,7 +2285,40 @@ static void network_fields(const struct matter_device_info *info, uint32_t respo
 {
 	(void)matter_tlv_start_container(w, tag, MATTER_TLV_STRUCTURE);
 
-	if (response_command == MATTER_CMD_NC_CONNECT_NETWORK_RESPONSE) {
+	if (response_command == MATTER_CMD_NC_SCAN_NETWORKS_RESPONSE) {
+		(void)matter_tlv_put_u64(w, MATTER_TLV_CTX(TAG_SCANRESP_STATUS),
+					 info->last_network_status);
+		if (info->last_network_status == MATTER_NC_STATUS_SUCCESS) {
+			(void)matter_tlv_start_container(w, MATTER_TLV_CTX(TAG_SCANRESP_THREAD),
+							 MATTER_TLV_ARRAY);
+			for (uint8_t i = 0u; i < s_scan_n && i < MATTER_THREAD_SCAN_MAX; i++) {
+				const struct matter_thread_scan_result *r = &s_scan[i];
+				uint64_t xpanid = 0u;
+				size_t name_len = 0u;
+
+				while (name_len < sizeof(r->name) - 1u && r->name[name_len] != '\0') {
+					name_len++;
+				}
+
+				for (size_t k = 0u; k < sizeof(r->xpanid); k++) {
+					xpanid = (xpanid << 8) | r->xpanid[k];
+				}
+				(void)matter_tlv_start_container(w, MATTER_TLV_ANON,
+								 MATTER_TLV_STRUCTURE);
+				(void)matter_tlv_put_u64(w, MATTER_TLV_CTX(0u), r->pan_id);
+				(void)matter_tlv_put_u64(w, MATTER_TLV_CTX(1u), xpanid);
+				(void)matter_tlv_put_utf8(w, MATTER_TLV_CTX(2u), r->name, name_len);
+				(void)matter_tlv_put_u64(w, MATTER_TLV_CTX(3u), r->channel);
+				(void)matter_tlv_put_u64(w, MATTER_TLV_CTX(4u), r->version);
+				(void)matter_tlv_put_bytes(w, MATTER_TLV_CTX(5u), r->ext_addr,
+							   sizeof(r->ext_addr));
+				(void)matter_tlv_put_i64(w, MATTER_TLV_CTX(6u), r->rssi);
+				(void)matter_tlv_put_u64(w, MATTER_TLV_CTX(7u), r->lqi);
+				(void)matter_tlv_end_container(w);
+			}
+			(void)matter_tlv_end_container(w);
+		}
+	} else if (response_command == MATTER_CMD_NC_CONNECT_NETWORK_RESPONSE) {
 		(void)matter_tlv_put_u64(w, MATTER_TLV_CTX(TAG_CONNRESP_STATUS),
 					 info->last_network_status);
 		/* ErrorValue is nullable and mandatory: null is what a device

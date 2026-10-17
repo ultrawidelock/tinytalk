@@ -472,7 +472,7 @@ static const struct want_globals k_want[] = {
 	{ MATTER_CLUSTER_ACCESS_CONTROL, 2u, 0u, 0u, 0u },
 	{ MATTER_CLUSTER_BASIC_INFORMATION, 5u, 0u, 0u, 0u },
 	{ MATTER_CLUSTER_GENERAL_COMMISSIONING, 2u, 0u, 3u, 3u },
-	{ MATTER_CLUSTER_NETWORK_COMMISSIONING, 2u, MATTER_NC_FEATURE_THREAD, 3u, 2u },
+	{ MATTER_CLUSTER_NETWORK_COMMISSIONING, 2u, MATTER_NC_FEATURE_THREAD, 5u, 3u },
 	{ MATTER_CLUSTER_GENERAL_DIAGNOSTICS, 2u, 0u, 2u, 1u },
 	{ MATTER_CLUSTER_OPERATIONAL_CREDENTIALS, 2u, 0u, 7u, 4u },
 	{ MATTER_CLUSTER_ADMIN_COMMISSIONING, 1u, 1u, 3u, 0u },
@@ -707,10 +707,169 @@ static void t_unique_id(void)
 	}
 }
 
+static void t_network_commissioning(void)
+{
+	static const uint8_t k_xpanid[8] = {0xDEu, 0xADu, 0x00u, 0xBEu, 0xEFu, 0x00u, 0xCAu, 0xFEu};
+	struct matter_device_info info;
+	struct matter_im_server srv;
+	uint8_t out[512];
+	uint32_t response;
+	size_t n;
+
+	admin_info(&info);
+	matter_clusters_init(&srv, &info);
+	test_matter_thread_stub_reset();
+
+	t_group("NetworkCommissioning's last-attempt and Thread attributes");
+	{
+		n = read_root(&srv, MATTER_CLUSTER_NETWORK_COMMISSIONING,
+			      MATTER_ATTR_NC_LAST_NETWORK_ID, out, sizeof(out));
+		T_OK("LastNetworkID null before any attempt", n == 1u && out[0] == 0x14u);
+		n = read_root(&srv, MATTER_CLUSTER_NETWORK_COMMISSIONING,
+			      MATTER_ATTR_NC_LAST_CONNECT_ERROR, out, sizeof(out));
+		T_OK("LastConnectErrorValue null", n == 1u && out[0] == 0x14u);
+		T_EQ("SupportedThreadFeatures none",
+		     (long)read_root_u64(&srv, MATTER_CLUSTER_NETWORK_COMMISSIONING,
+					 MATTER_ATTR_NC_SUPPORTED_THREAD_FEAT),
+		     0L);
+		g_thread_iface.thread_version = 5u;
+		T_EQ("ThreadVersion from the stack",
+		     (long)read_root_u64(&srv, MATTER_CLUSTER_NETWORK_COMMISSIONING,
+					 MATTER_ATTR_NC_THREAD_VERSION),
+		     5L);
+	}
+
+	t_group("ScanNetworks reports what the stack heard, without a fail-safe");
+	{
+		static const uint8_t k_empty[] = {0x15u, 0x18u};
+		struct matter_tlv_writer w;
+		struct matter_tlv_reader r;
+		uint64_t v = 0xFFu;
+		int results = 0;
+
+		info.attempt.active = false;
+		g_thread_scan_n = 2u;
+		g_thread_scan[0].pan_id = 0x1234u;
+		memcpy(g_thread_scan[0].xpanid, k_xpanid, 8u);
+		memcpy(g_thread_scan[0].name, "MyHome", 7u);
+		g_thread_scan[0].channel = 25u;
+		g_thread_scan[0].rssi = -48;
+		g_thread_scan[1].pan_id = 0x5678u;
+		T_EQ("ScanNetworks succeeds",
+		     root_invoke(&srv, MATTER_CLUSTER_NETWORK_COMMISSIONING,
+				 MATTER_CMD_NC_SCAN_NETWORKS, k_empty, sizeof(k_empty), &response),
+		     MATTER_IM_STATUS_SUCCESS);
+		T_EQ("with ScanNetworksResponse", (long)response,
+		     (long)MATTER_CMD_NC_SCAN_NETWORKS_RESPONSE);
+		matter_tlv_writer_init(&w, out, sizeof(out));
+		srv.command_fields(srv.ctx, MATTER_ENDPOINT_ROOT,
+				   MATTER_CLUSTER_NETWORK_COMMISSIONING, response, &w, MATTER_TLV_ANON);
+		matter_tlv_reader_init(&r, out, w.len);
+		T_OK("NetworkingStatus Success", matter_tlv_next(&r) == MATTER_OK &&
+						 matter_tlv_enter(&r) == MATTER_OK &&
+						 matter_tlv_next(&r) == MATTER_OK &&
+						 matter_tlv_get_u64(&r, &v) == MATTER_OK && v == 0u);
+		T_OK("ThreadScanResults", matter_tlv_next(&r) == MATTER_OK &&
+						  matter_tlv_tag(&r) == MATTER_TLV_CTX(3u) &&
+						  matter_tlv_enter(&r) == MATTER_OK);
+		while (matter_tlv_next(&r) == MATTER_OK) {
+			results++;
+			if (results == 1) {
+				T_OK("first is a struct", matter_tlv_enter(&r) == MATTER_OK);
+				T_OK("PanId", matter_tlv_next(&r) == MATTER_OK &&
+						      matter_tlv_get_u64(&r, &v) == MATTER_OK &&
+						      v == 0x1234u);
+				T_OK("ExtendedPanId big-endian",
+				     matter_tlv_next(&r) == MATTER_OK &&
+					     matter_tlv_get_u64(&r, &v) == MATTER_OK &&
+					     v == 0xDEAD00BEEF00CAFEull);
+				(void)matter_tlv_exit(&r);
+			}
+		}
+		T_EQ("both networks", results, 2);
+
+		g_thread_scan_rc = MATTER_E_STATE;
+		T_EQ("a scan that cannot run still answers",
+		     root_invoke(&srv, MATTER_CLUSTER_NETWORK_COMMISSIONING,
+				 MATTER_CMD_NC_SCAN_NETWORKS, k_empty, sizeof(k_empty), &response),
+		     MATTER_IM_STATUS_SUCCESS);
+		matter_tlv_writer_init(&w, out, sizeof(out));
+		srv.command_fields(srv.ctx, MATTER_ENDPOINT_ROOT,
+				   MATTER_CLUSTER_NETWORK_COMMISSIONING, response, &w, MATTER_TLV_ANON);
+		matter_tlv_reader_init(&r, out, w.len);
+		T_OK("with UnknownError and no results",
+		     matter_tlv_next(&r) == MATTER_OK && matter_tlv_enter(&r) == MATTER_OK &&
+			     matter_tlv_next(&r) == MATTER_OK &&
+			     matter_tlv_get_u64(&r, &v) == MATTER_OK && v == 0x0Cu &&
+			     matter_tlv_next(&r) == MATTER_END);
+		g_thread_scan_rc = MATTER_OK;
+	}
+
+	t_group("ReorderNetwork with the one network there is");
+	{
+		uint8_t req[32];
+		size_t len;
+		struct matter_tlv_writer w;
+
+		info.attempt.active = true;
+		info.attempt.have_thread_candidate = true;
+		memcpy(info.attempt.thread_xpanid, k_xpanid, 8u);
+		for (int idx = 0; idx < 2; idx++) {
+			matter_tlv_writer_init(&w, req, sizeof(req));
+			(void)matter_tlv_start_container(&w, MATTER_TLV_ANON, MATTER_TLV_STRUCTURE);
+			(void)matter_tlv_put_bytes(&w, MATTER_TLV_CTX(0u), k_xpanid, 8u);
+			(void)matter_tlv_put_u64(&w, MATTER_TLV_CTX(1u), (uint64_t)idx);
+			(void)matter_tlv_end_container(&w);
+			len = w.len;
+			T_EQ("answered with NetworkConfigResponse",
+			     root_invoke(&srv, MATTER_CLUSTER_NETWORK_COMMISSIONING,
+					 MATTER_CMD_NC_REORDER_NETWORK, req, len, &response),
+			     MATTER_IM_STATUS_SUCCESS);
+			T_EQ(idx == 0 ? "index 0: Success" : "index 1: OutOfRange",
+			     (long)info.last_network_status, idx == 0 ? 0L : 1L);
+		}
+		info.attempt.thread_xpanid[0] ^= 1u;
+		T_EQ("another network id",
+		     root_invoke(&srv, MATTER_CLUSTER_NETWORK_COMMISSIONING,
+				 MATTER_CMD_NC_REORDER_NETWORK, req, len, &response),
+		     MATTER_IM_STATUS_SUCCESS);
+		T_EQ("is NetworkIDNotFound", (long)info.last_network_status, 3L);
+		info.attempt.active = false;
+		T_EQ("and needs the fail-safe",
+		     root_invoke(&srv, MATTER_CLUSTER_NETWORK_COMMISSIONING,
+				 MATTER_CMD_NC_REORDER_NETWORK, req, len, &response),
+		     MATTER_IM_STATUS_FAILSAFE_REQUIRED);
+	}
+
+	t_group("ConnectNetwork records LastNetworkID even when it fails");
+	{
+		uint8_t req[32];
+		struct matter_tlv_writer w;
+		static const uint8_t k_other[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+
+		info.attempt.active = true;
+		matter_tlv_writer_init(&w, req, sizeof(req));
+		(void)matter_tlv_start_container(&w, MATTER_TLV_ANON, MATTER_TLV_STRUCTURE);
+		(void)matter_tlv_put_bytes(&w, MATTER_TLV_CTX(0u), k_other, 8u);
+		(void)matter_tlv_end_container(&w);
+		T_EQ("ConnectNetwork for an unknown network",
+		     root_invoke(&srv, MATTER_CLUSTER_NETWORK_COMMISSIONING,
+				 MATTER_CMD_NC_CONNECT_NETWORK, req, w.len, &response),
+		     MATTER_IM_STATUS_SUCCESS);
+		n = read_root(&srv, MATTER_CLUSTER_NETWORK_COMMISSIONING,
+			      MATTER_ATTR_NC_LAST_NETWORK_ID, out, sizeof(out));
+		T_OK("LastNetworkID is that network",
+		     n == 10u && out[0] == 0x10u && out[1] == 8u && memcmp(&out[2], k_other, 8u) == 0);
+		info.attempt.active = false;
+		info.attempt.have_thread_candidate = false;
+	}
+}
+
 void test_root_clusters(void)
 {
 	t_general_diagnostics();
 	t_group_keys();
 	t_globals();
 	t_unique_id();
+	t_network_commissioning();
 }
