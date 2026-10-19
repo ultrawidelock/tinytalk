@@ -43,6 +43,7 @@ extern "C" {
 #define TM_KV_KEY_MATTER_SUB_SLOT_LIMIT 0x2050u
 #define TM_KV_KEY_MATTER_DL_AUTO_RELOCK 0x2060u
 #define TM_KV_KEY_MATTER_DL_LOCK_STATE  0x2061u
+#define TM_KV_KEY_MATTER_DL_USERS       0x2062u
 
 /* The per-record Matter identity schema. */
 #define TM_KV_KEY_MATTER_MF2_META    0x2070u

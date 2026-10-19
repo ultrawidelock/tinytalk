@@ -2827,6 +2827,7 @@ static uint8_t table_invoke(struct matter_device_info *info, const struct tm_clu
 {
 	size_t accessing_slot = fabric_slot_for_index(info, info->accessing_fabric_index);
 	struct tm_req req;
+	uint8_t privilege;
 
 	/* PASE, a removed fabric, and a provisional identity cannot operate
 	 * the lock. */
@@ -2836,10 +2837,13 @@ static uint8_t table_invoke(struct matter_device_info *info, const struct tm_clu
 	if (c->invoke == NULL || !id_listed(c->accepted, c->n_accepted, inv->command)) {
 		return MATTER_IM_STATUS_UNSUPPORTED_COMMAND;
 	}
-	if (!fabric_slot_has_privilege(info, accessing_slot,
-				       c->invoke_privilege != 0u ? c->invoke_privilege
-								 : MATTER_AC_PRIVILEGE_OPERATE,
-				       inv->endpoint, inv->cluster)) {
+	privilege = c->cmd_privilege != NULL ? c->cmd_privilege(inv->command) : 0u;
+	if (privilege == 0u) {
+		privilege = c->invoke_privilege != 0u ? c->invoke_privilege
+						      : MATTER_AC_PRIVILEGE_OPERATE;
+	}
+	if (!fabric_slot_has_privilege(info, accessing_slot, privilege, inv->endpoint,
+				       inv->cluster)) {
 		return MATTER_IM_STATUS_UNSUPPORTED_ACCESS;
 	}
 	app_req(info, inv->endpoint, false, &req);

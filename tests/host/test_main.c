@@ -50,6 +50,9 @@ int main(void)
 		{ "tm_app", test_tm_app },
 		{ "root_clusters", test_root_clusters },
 		{ "tm_identify", test_tm_identify },
+#if TM_DOOR_LOCK_ALIRO
+		{ "tm_door_lock_aliro", test_tm_door_lock_aliro },
+#endif
 #if defined(SPAKEFAKE_PASSTHROUGH)
 		{ "spake2p_mbedtls", test_spake2p_mbedtls },
 #endif

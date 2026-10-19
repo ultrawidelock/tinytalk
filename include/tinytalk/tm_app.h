@@ -101,6 +101,9 @@ struct tm_cluster {
 	/** Least privilege to invoke and to write; 0 means Operate. */
 	uint8_t invoke_privilege;
 	uint8_t write_privilege;
+	/** Least privilege for one command, when they differ; 0 means
+	 *  invoke_privilege. NULL makes every command invoke_privilege. */
+	uint8_t (*cmd_privilege)(uint32_t cmd);
 	uint16_t revision;
 	uint32_t features;
 	const uint32_t *accepted;

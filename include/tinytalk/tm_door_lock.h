@@ -110,6 +110,114 @@ extern "C" {
  */
 #define MATTER_DL_CLUSTER_REVISION 8u
 
+/*
+ * ---- Aliro (TM_DOOR_LOCK_ALIRO, CONFIG_TINYTALK_DOOR_LOCK_ALIRO) ----------
+ *
+ * The USER, ALIRO_PROVISIONING and ALIRO_BLE_UWB features (DoorLock/Enums.h,
+ * Feature). A controller reads the nine reader attributes to decide whether
+ * this lock can be a credential reader, then sends SetAliroReaderConfig with
+ * the reader's private key, and hands credential keys over on the
+ * user/credential path. The application's reader takes them through the
+ * hooks below; the cluster keeps the user table and what a controller may
+ * read back.
+ */
+#define MATTER_DL_FEATURE_USER               0x0100u
+#define MATTER_DL_FEATURE_ALIRO_PROVISIONING 0x2000u
+#define MATTER_DL_FEATURE_ALIRO_BLE_UWB      0x4000u
+
+/* DoorLock/AttributeIds.h. */
+#define MATTER_ATTR_DL_USERS_MAX                 0x0011u
+#define MATTER_ATTR_DL_CREDENTIAL_RULES          0x001Bu
+#define MATTER_ATTR_DL_CREDS_PER_USER_MAX        0x001Cu
+#define MATTER_ATTR_DL_ALIRO_VERIFICATION_KEY    0x0080u
+#define MATTER_ATTR_DL_ALIRO_GROUP_ID            0x0081u
+#define MATTER_ATTR_DL_ALIRO_GROUP_SUB_ID        0x0082u
+#define MATTER_ATTR_DL_ALIRO_EXPEDITED_VERSIONS  0x0083u
+#define MATTER_ATTR_DL_ALIRO_GROUP_RESOLVING_KEY 0x0084u
+#define MATTER_ATTR_DL_ALIRO_BLE_UWB_VERSIONS    0x0085u
+#define MATTER_ATTR_DL_ALIRO_BLE_ADV_VERSION     0x0086u
+#define MATTER_ATTR_DL_ALIRO_ISSUER_KEYS_MAX     0x0087u
+#define MATTER_ATTR_DL_ALIRO_ENDPOINT_KEYS_MAX   0x0088u
+
+/* DoorLock/CommandIds.h. */
+#define MATTER_CMD_DL_SET_USER                       0x001Au
+#define MATTER_CMD_DL_GET_USER                       0x001Bu
+#define MATTER_CMD_DL_GET_USER_RESPONSE              0x001Cu
+#define MATTER_CMD_DL_CLEAR_USER                     0x001Du
+#define MATTER_CMD_DL_SET_CREDENTIAL                 0x0022u
+#define MATTER_CMD_DL_SET_CREDENTIAL_RESPONSE        0x0023u
+#define MATTER_CMD_DL_GET_CREDENTIAL_STATUS          0x0024u
+#define MATTER_CMD_DL_GET_CREDENTIAL_STATUS_RESPONSE 0x0025u
+#define MATTER_CMD_DL_CLEAR_CREDENTIAL               0x0026u
+#define MATTER_CMD_DL_SET_ALIRO_READER_CONFIG        0x0028u
+#define MATTER_CMD_DL_CLEAR_ALIRO_READER_CONFIG      0x0029u
+
+/* CredentialTypeEnum: the three that carry a reader trust anchor. */
+#define MATTER_DL_CRED_ALIRO_ISSUER_KEY            6u
+#define MATTER_DL_CRED_ALIRO_EVICTABLE_ENDPOINT    7u
+#define MATTER_DL_CRED_ALIRO_NONEVICTABLE_ENDPOINT 8u
+/* ClearUser and ClearCredential: every one of them (door-lock-server.cpp). */
+#define MATTER_DL_INDEX_ALL 0xFFFEu
+/* OperationSourceEnum Aliro: the bolt moved for a credential. */
+#define MATTER_DL_OP_SOURCE_ALIRO 10u
+
+#define MATTER_DL_USERS_MAX          10u
+#define MATTER_DL_CREDS_PER_USER_MAX 5u
+#define MATTER_ALIRO_SIGNING_KEY_LEN      32u
+#define MATTER_ALIRO_VERIFICATION_KEY_LEN 65u
+#define MATTER_ALIRO_GROUP_ID_LEN         16u
+#define MATTER_ALIRO_PROTOCOL_VERSION     0x0100u
+#define MATTER_ALIRO_BLE_ADV_VERSION      0u
+#define MATTER_ALIRO_ISSUER_KEYS_MAX      5u
+#define MATTER_ALIRO_ENDPOINT_KEYS_MAX    6u
+
+/**
+ * Where the keys land, in the application's reader. Every hook returns 0 when
+ * done and persisted; anything else makes the command report FAILURE, so a
+ * controller is never told a key was kept that the next reboot forgets. The
+ * cluster is called with the node's lock held.
+ */
+struct tm_door_lock_aliro_hooks {
+	/** SetAliroReaderConfig: the reader identity. reader_id is
+	 *  group_id || group_sub_id; the signing key is never kept here. */
+	int (*reader_config)(const uint8_t signing_key[MATTER_ALIRO_SIGNING_KEY_LEN],
+			     const uint8_t verification_key[MATTER_ALIRO_VERIFICATION_KEY_LEN],
+			     const uint8_t group_id[MATTER_ALIRO_GROUP_ID_LEN],
+			     const uint8_t group_sub_id[MATTER_ALIRO_GROUP_ID_LEN],
+			     const uint8_t grk[MATTER_ALIRO_GROUP_ID_LEN]);
+	/** ClearAliroReaderConfig. */
+	int (*reader_clear)(void);
+	/** A credential public key at (type, index), filed under user_index
+	 *  (0: none). 0 added, 1 already present, -ENOSPC full, other < 0
+	 *  refused. */
+	int (*credential_set)(uint8_t cred_type,
+			      const uint8_t key[MATTER_ALIRO_VERIFICATION_KEY_LEN],
+			      uint16_t cred_index, uint16_t user_index);
+	/** Remove (type, index); index MATTER_DL_INDEX_ALL for every one of the
+	 *  type, and type 0 with it for every type. */
+	int (*credential_clear)(uint8_t cred_type, uint16_t cred_index);
+	/** What is stored at (type, index): copies the key and returns the user
+	 *  index it is filed under (0 when none), or < 0 when nothing is there. */
+	int (*credential_lookup)(uint8_t cred_type, uint16_t cred_index,
+				 uint8_t key[MATTER_ALIRO_VERIFICATION_KEY_LEN]);
+	/** ClearUser: drop the credentials filed under user_index
+	 *  (MATTER_DL_INDEX_ALL: every user). */
+	int (*user_clear)(uint16_t user_index);
+};
+
+/** Install the hooks. Before matter_commission_init(); NULL refuses every
+ *  provisioning command with FAILURE. */
+void tm_door_lock_aliro_configure(const struct tm_door_lock_aliro_hooks *hooks);
+
+/**
+ * What the reader holds, for the attributes a controller reads back: after a
+ * reboot, once the reader has loaded its identity. NULL for all three when it
+ * has none (the dev identity). Takes the node's lock.
+ */
+void tm_door_lock_aliro_set_identity(const uint8_t verification_key[MATTER_ALIRO_VERIFICATION_KEY_LEN],
+				     const uint8_t group_id[MATTER_ALIRO_GROUP_ID_LEN],
+				     const uint8_t grk[MATTER_ALIRO_GROUP_ID_LEN]);
+
 /** The cluster, for an application's own endpoint table. */
 extern const struct tm_cluster tm_door_lock;
 

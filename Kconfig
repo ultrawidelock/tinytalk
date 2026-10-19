@@ -52,6 +52,17 @@ config TINYTALK_DOOR_LOCK
 	  LockOperation event. The application provides
 	  tm_door_lock_actuate(). See include/tinytalk/tm_door_lock.h.
 
+config TINYTALK_DOOR_LOCK_ALIRO
+	bool "Aliro on the Door Lock cluster"
+	depends on TINYTALK_DOOR_LOCK
+	help
+	  The USER, ALIRO_PROVISIONING and ALIRO_BLE_UWB features on the Door
+	  Lock cluster: the user table, SetCredential and its kin for the
+	  three Aliro credential types, SetAliroReaderConfig, and the nine
+	  reader attributes a controller reads before it provisions. The
+	  application's credential reader takes the keys through the hooks of
+	  tm_door_lock_aliro_configure().
+
 config TINYTALK_IDENTIFY
 	bool "Identify cluster module (clusters/identify)"
 	depends on TINYTALK

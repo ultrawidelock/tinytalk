@@ -30,7 +30,7 @@ HDRS := $(wildcard include/tinytalk/*.h tests/host/*.h tests/host/*/*.h)
 
 # _DEFAULT_SOURCE: glibc hides clock_gettime/CLOCK_MONOTONIC under strict
 # -std=c11 without it; Darwin headers ignore it.
-TEST_DEFS := -D_DEFAULT_SOURCE
+TEST_DEFS := -D_DEFAULT_SOURCE -DTM_DOOR_LOCK_ALIRO=1
 TEST_INCS := $(INCS) -Itests/host
 
 # The SPAKE2+ curve under the host suite.

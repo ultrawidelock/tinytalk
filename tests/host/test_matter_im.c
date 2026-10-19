@@ -74,7 +74,7 @@ struct rep {
 /* Room for every attribute of the widest cluster this node has, plus slack.
  * BasicInformation alone reports 16, which is exactly where this used to sit --
  * and an overflow here reads as a malformed report rather than a full one. */
-#define MAX_REPS 128
+#define MAX_REPS 192
 
 /** Read an AttributePathIB into @p r. Reader is positioned on the list. */
 static int walk_path(struct matter_tlv_reader *rd, struct rep *r)
@@ -676,7 +676,11 @@ void test_matter_im(void)
 		 * out -- claiming those would commit this node to surfaces it has
 		 * none of.
 		 */
+#if TM_DOOR_LOCK_ALIRO
+		T_EQ("the User and the two Aliro feature bits", sreps[0].vu, 0x6100u);
+#else
 		T_EQ("no feature bits at all", sreps[0].vu, 0u);
+#endif
 
 		/* A cluster wildcard on the lock expands to the same two
 		 * clusters has_cluster() answers for, no more. */

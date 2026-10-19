@@ -771,8 +771,13 @@ void test_matter_clusters(void)
 				saw_unlock = saw_unlock || v == MATTER_CMD_DL_UNLOCK_DOOR;
 			}
 		}
+#if TM_DOOR_LOCK_ALIRO
+		T_OK("and it is LockDoor, UnlockDoor and the eight Aliro commands",
+		     saw_lock && saw_unlock && accepted == 10);
+#else
 		T_OK("and it is exactly LockDoor and UnlockDoor",
 		     saw_lock && saw_unlock && accepted == 2);
+#endif
 	}
 
 	t_group("the lock endpoint answers its own commands");

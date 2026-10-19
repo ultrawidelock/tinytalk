@@ -12,6 +12,10 @@
 #include <tinytalk/tm_kv.h>
 #include <tinytalk/tm_platform.h>
 
+#if TM_DOOR_LOCK_ALIRO
+#include "tm_door_lock_aliro.h"
+#endif
+
 /*
  * FeatureMap leads, because it is the attribute that decides what the rest
  * mean. The four other globals close the list, and the list includes them
@@ -26,6 +30,20 @@ static const uint32_t k_lock_attrs[] = {
 	MATTER_ATTR_DL_AUTO_RELOCK_TIME,
 	MATTER_ATTR_DL_OPERATING_MODE,
 	MATTER_ATTR_DL_SUPPORTED_OPERATING_MODES,
+#if TM_DOOR_LOCK_ALIRO
+	MATTER_ATTR_DL_USERS_MAX,
+	MATTER_ATTR_DL_CREDENTIAL_RULES,
+	MATTER_ATTR_DL_CREDS_PER_USER_MAX,
+	MATTER_ATTR_DL_ALIRO_VERIFICATION_KEY,
+	MATTER_ATTR_DL_ALIRO_GROUP_ID,
+	MATTER_ATTR_DL_ALIRO_GROUP_SUB_ID,
+	MATTER_ATTR_DL_ALIRO_EXPEDITED_VERSIONS,
+	MATTER_ATTR_DL_ALIRO_GROUP_RESOLVING_KEY,
+	MATTER_ATTR_DL_ALIRO_BLE_UWB_VERSIONS,
+	MATTER_ATTR_DL_ALIRO_BLE_ADV_VERSION,
+	MATTER_ATTR_DL_ALIRO_ISSUER_KEYS_MAX,
+	MATTER_ATTR_DL_ALIRO_ENDPOINT_KEYS_MAX,
+#endif
 	MATTER_ATTR_CLUSTER_REVISION,
 	MATTER_ATTR_ATTRIBUTE_LIST,
 	MATTER_ATTR_ACCEPTED_CMD_LIST,
@@ -40,7 +58,34 @@ static const uint32_t k_lock_attrs[] = {
 static const uint32_t k_lock_accepted_cmds[] = {
 	MATTER_CMD_DL_LOCK_DOOR,
 	MATTER_CMD_DL_UNLOCK_DOOR,
+#if TM_DOOR_LOCK_ALIRO
+	MATTER_CMD_DL_SET_USER,
+	MATTER_CMD_DL_GET_USER,
+	MATTER_CMD_DL_CLEAR_USER,
+	MATTER_CMD_DL_SET_CREDENTIAL,
+	MATTER_CMD_DL_GET_CREDENTIAL_STATUS,
+	MATTER_CMD_DL_CLEAR_CREDENTIAL,
+	MATTER_CMD_DL_SET_ALIRO_READER_CONFIG,
+	MATTER_CMD_DL_CLEAR_ALIRO_READER_CONFIG,
+#endif
 };
+
+#if TM_DOOR_LOCK_ALIRO
+static const uint32_t k_lock_generated_cmds[] = {
+	MATTER_CMD_DL_GET_USER_RESPONSE,
+	MATTER_CMD_DL_SET_CREDENTIAL_RESPONSE,
+	MATTER_CMD_DL_GET_CREDENTIAL_STATUS_RESPONSE,
+};
+
+/* The tile's two buttons at Operate; everything that provisions at
+ * Administer (door-lock-cluster.xml, the commands' access). */
+static uint8_t lock_cmd_privilege(uint32_t cmd)
+{
+	return cmd == MATTER_CMD_DL_LOCK_DOOR || cmd == MATTER_CMD_DL_UNLOCK_DOOR
+		       ? 0u
+		       : MATTER_AC_PRIVILEGE_ADMINISTER;
+}
+#endif
 
 /*
  * What LockState reports, and what LockDoor/UnlockDoor change.
@@ -125,6 +170,9 @@ static void lock_read(const struct tm_req *req, uint32_t attr, struct matter_tlv
 		(void)matter_tlv_put_u64(w, tag, MATTER_DL_SUPPORTED_OPERATING_MODES);
 		return;
 	default:
+#if TM_DOOR_LOCK_ALIRO
+		tm_dl_aliro_read(attr, w, tag);
+#endif
 		return;
 	}
 }
@@ -185,6 +233,11 @@ static void record(uint16_t endpoint, uint8_t operation, uint8_t source, uint8_t
 static uint8_t lock_invoke(const struct tm_req *req, uint32_t cmd, const uint8_t *fields,
 			   size_t len, uint32_t *response)
 {
+#if TM_DOOR_LOCK_ALIRO
+	if (cmd != MATTER_CMD_DL_LOCK_DOOR && cmd != MATTER_CMD_DL_UNLOCK_DOOR) {
+		return tm_dl_aliro_invoke(req, cmd, fields, len, response);
+	}
+#endif
 	(void)fields;
 	(void)len;
 	(void)response;
@@ -299,6 +352,9 @@ static void lock_init(uint16_t endpoint)
 	}
 	s_saved_lock_state = s_lock_state;
 	s_saved_auto_relock_s = s_auto_relock_s;
+#if TM_DOOR_LOCK_ALIRO
+	tm_dl_aliro_init();
+#endif
 	tm_door_lock_actuate(reported(s_lock_state));
 }
 
@@ -352,6 +408,9 @@ int tm_door_lock_erase(void)
 	static const uint16_t keys[] = {
 		TM_KV_KEY_MATTER_DL_AUTO_RELOCK,
 		TM_KV_KEY_MATTER_DL_LOCK_STATE,
+#if TM_DOOR_LOCK_ALIRO
+		TM_KV_KEY_MATTER_DL_USERS,
+#endif
 	};
 	int first_err = 0;
 
@@ -371,14 +430,25 @@ const struct tm_cluster tm_door_lock = {
 	.n_attrs = sizeof(k_lock_attrs) / sizeof(k_lock_attrs[0]),
 	.accepted = k_lock_accepted_cmds,
 	.n_accepted = sizeof(k_lock_accepted_cmds) / sizeof(k_lock_accepted_cmds[0]),
+#if TM_DOOR_LOCK_ALIRO
+	.generated = k_lock_generated_cmds,
+	.n_generated = sizeof(k_lock_generated_cmds) / sizeof(k_lock_generated_cmds[0]),
+	.cmd_privilege = lock_cmd_privilege,
+	.response = tm_dl_aliro_response,
+#endif
 	/* Writes need Administer, as they always have here; the cluster spec
 	 * asks only Manage of AutoRelockTime. */
 	.write_privilege = MATTER_AC_PRIVILEGE_ADMINISTER,
 	.revision = MATTER_DL_CLUSTER_REVISION,
+#if TM_DOOR_LOCK_ALIRO
+	.features = MATTER_DL_FEATURE_USER | MATTER_DL_FEATURE_ALIRO_PROVISIONING |
+		    MATTER_DL_FEATURE_ALIRO_BLE_UWB,
+#else
 	/* No features: claiming PIN, RFID, schedules or users would commit this
 	 * node to the whole credential and schedule surface, none of which it
 	 * has. */
 	.features = 0u,
+#endif
 	.read = lock_read,
 	.write = lock_write,
 	.invoke = lock_invoke,
