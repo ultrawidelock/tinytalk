@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: ISC */
+/* SPDX-License-Identifier: Apache-2.0 */
 
 /*
  * matter_fab_store: the operational identity, across a reboot, over the

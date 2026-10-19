@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: ISC */
+/* SPDX-License-Identifier: Apache-2.0 */
 
 /**
  * @file matter_ble_zephyr.c — the 0xFFF6 GATT service that carries BTP.

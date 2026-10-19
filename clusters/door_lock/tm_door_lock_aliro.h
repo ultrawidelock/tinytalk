@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: ISC */
+/* SPDX-License-Identifier: Apache-2.0 */
 
 /*
  * The Aliro half of the Door Lock cluster, called from tm_door_lock.c for the

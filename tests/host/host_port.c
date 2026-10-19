@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: ISC */
+/* SPDX-License-Identifier: Apache-2.0 */
 
 /*
  * The host port: tm_platform.h, tm_kv.h, matter_ble.h, the two application

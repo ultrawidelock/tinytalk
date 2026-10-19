@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: ISC */
+/* SPDX-License-Identifier: Apache-2.0 */
 
 /* What tests/host/host_port.c records for a test to read back. */
 #ifndef TINYTALK_HOST_PORT_H

@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: ISC */
+/* SPDX-License-Identifier: Apache-2.0 */
 
 /**
  * @file matter_tlv.c — Matter TLV codec, encoder then decoder.

@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: ISC */
+/* SPDX-License-Identifier: Apache-2.0 */
 
 /**
  * @file matter_pase_sm.h — PASE responder: the device side of the five messages.

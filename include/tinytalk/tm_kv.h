@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: ISC */
+/* SPDX-License-Identifier: Apache-2.0 */
 
 /*
  * tm_kv.h - small persistent values, addressed by number. The storage seam a

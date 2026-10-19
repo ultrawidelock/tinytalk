@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: ISC */
+/* SPDX-License-Identifier: Apache-2.0 */
 
 /**
  * @file matter_spake2p.h — SPAKE2+ glue: PBKDF2, transcript, confirmations.

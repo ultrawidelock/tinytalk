@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: ISC */
+/* SPDX-License-Identifier: Apache-2.0 */
 
 /*
  * The four SPAKE2+ P-256 primitives matter_spake2p.h declares, on tinypsa.

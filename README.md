@@ -178,4 +178,4 @@ and Zephyr.
 
 ## License
 
-ISC, see LICENSE. Third-party data is listed in NOTICE.
+Apache-2.0, see LICENSE. Third-party data is listed in NOTICE.
