@@ -118,7 +118,7 @@ static uint32_t s_saved_auto_relock_s;
 static uint16_t s_endpoint = MATTER_ENDPOINT_LOCK;
 
 /* The LockOperation blob: type, source, fabric index, then the node id LE. */
-#define BLOB_LEN 11u
+#define BLOB_LEN 13u
 
 static uint8_t reported(uint8_t lock_state)
 {
@@ -211,7 +211,7 @@ static uint8_t lock_write(const struct tm_req *req, uint32_t attr, const uint8_t
  * fabric and claiming one would name the wrong controller.
  */
 static void record(uint16_t endpoint, uint8_t operation, uint8_t source, uint8_t fabric_index,
-		   uint64_t source_node)
+		   uint64_t source_node, uint16_t user_index)
 {
 	uint8_t blob[BLOB_LEN];
 
@@ -226,6 +226,8 @@ static void record(uint16_t endpoint, uint8_t operation, uint8_t source, uint8_t
 	for (size_t i = 0u; i < 8u; i++) {
 		blob[3u + i] = (uint8_t)(source_node >> (8u * i));
 	}
+	blob[11] = (uint8_t)user_index;
+	blob[12] = (uint8_t)(user_index >> 8);
 	(void)tm_event_emit(endpoint, MATTER_CLUSTER_DOOR_LOCK, MATTER_EVENT_DL_LOCK_OPERATION,
 			    MATTER_EVENT_PRIORITY_CRITICAL, blob, sizeof(blob));
 }
@@ -262,7 +264,7 @@ static uint8_t lock_invoke(const struct tm_req *req, uint32_t cmd, const uint8_t
 	 */
 	record(req->endpoint,
 	       cmd == MATTER_CMD_DL_UNLOCK_DOOR ? MATTER_DL_LOCK_OP_UNLOCK : MATTER_DL_LOCK_OP_LOCK,
-	       MATTER_DL_OP_SOURCE_REMOTE, req->fabric_index, 0u);
+	       MATTER_DL_OP_SOURCE_REMOTE, req->fabric_index, 0u, 0u);
 	/*
 	 * The application is told from here, the one point every controller's
 	 * change reaches. In the source project hanging the light off a second
@@ -283,8 +285,10 @@ static uint8_t lock_invoke(const struct tm_req *req, uint32_t cmd, const uint8_t
 /*
  * The LockOperation fields.
  *
- * UserIndex is always null: this node keeps no users. A null nullable says
- * "not known", which is true; a zero would name user slot 0, which is not.
+ * UserIndex is the Door Lock user the credential that moved the bolt is
+ * filed under, when the application knows it (an Aliro walk-up); null
+ * otherwise. A null nullable says "not known", which is true; a zero would
+ * name user slot 0, which does not exist, so zero in the blob means null.
  *
  * The credential list (field 5) is deliberately absent: it is optional, it
  * would carry a credential index this node does not track per operation, and
@@ -294,6 +298,7 @@ static void lock_event(const struct tm_req *req, uint32_t event, const uint8_t *
 		       struct matter_tlv_writer *w, matter_tlv_tag_t tag)
 {
 	uint64_t source_node = 0u;
+	uint16_t user_index = (uint16_t)(blob[11] | ((uint16_t)blob[12] << 8));
 
 	(void)req;
 	(void)event;
@@ -303,7 +308,12 @@ static void lock_event(const struct tm_req *req, uint32_t event, const uint8_t *
 	(void)matter_tlv_start_container(w, tag, MATTER_TLV_STRUCTURE);
 	(void)matter_tlv_put_u64(w, MATTER_TLV_CTX(MATTER_DL_LOCK_OP_FIELD_TYPE), blob[0]);
 	(void)matter_tlv_put_u64(w, MATTER_TLV_CTX(MATTER_DL_LOCK_OP_FIELD_SOURCE), blob[1]);
-	(void)matter_tlv_put_null(w, MATTER_TLV_CTX(MATTER_DL_LOCK_OP_FIELD_USER_INDEX));
+	if (user_index != 0u) {
+		(void)matter_tlv_put_u64(w, MATTER_TLV_CTX(MATTER_DL_LOCK_OP_FIELD_USER_INDEX),
+					 user_index);
+	} else {
+		(void)matter_tlv_put_null(w, MATTER_TLV_CTX(MATTER_DL_LOCK_OP_FIELD_USER_INDEX));
+	}
 	/*
 	 * Each nullable stands on its own. A controller command has a fabric and
 	 * an unknown node; a change no controller asked for has neither. Naming a
@@ -388,19 +398,24 @@ static void lock_changed(uint16_t endpoint)
 void tm_door_lock_record(uint8_t operation, uint8_t source, uint8_t fabric_index,
 			 uint64_t source_node)
 {
-	record(s_endpoint, operation, source, fabric_index, source_node);
+	record(s_endpoint, operation, source, fabric_index, source_node, 0u);
 }
 
-void tm_door_lock_set(uint8_t lock_state, uint8_t source)
+void tm_door_lock_set_user(uint8_t lock_state, uint8_t source, uint16_t user_index)
 {
 	tm_lock();
 	s_lock_state = reported(lock_state);
 	record(s_endpoint,
 	       s_lock_state == MATTER_DL_LOCK_STATE_UNLOCKED ? MATTER_DL_LOCK_OP_UNLOCK
 							     : MATTER_DL_LOCK_OP_LOCK,
-	       source, 0u, 0u);
+	       source, 0u, 0u, user_index);
 	tm_attr_changed(s_endpoint, MATTER_CLUSTER_DOOR_LOCK, MATTER_ATTR_DL_LOCK_STATE);
 	tm_unlock();
+}
+
+void tm_door_lock_set(uint8_t lock_state, uint8_t source)
+{
+	tm_door_lock_set_user(lock_state, source, 0u);
 }
 
 int tm_door_lock_erase(void)

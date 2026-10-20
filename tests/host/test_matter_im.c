@@ -2178,6 +2178,14 @@ void test_matter_im_events(void)
 				    0x1122334455667788ULL);
 		T_EQ("a node id without a fabric is not kept",
 		     (long)event_field(&srv, 1u, MATTER_DL_LOCK_OP_FIELD_SOURCE_NODE), 0L);
+		T_EQ("and no user is named",
+		     (long)event_field(&srv, 1u, MATTER_DL_LOCK_OP_FIELD_USER_INDEX), 0L);
+
+		/* A credential's walk-up names the user it is filed under. */
+		tm_door_lock_set_user(MATTER_DL_LOCK_STATE_UNLOCKED, MATTER_DL_OP_SOURCE_UNSPECIFIED,
+				      3u);
+		T_EQ("the user that unlocked",
+		     (long)event_field(&srv, 2u, MATTER_DL_LOCK_OP_FIELD_USER_INDEX), 3L);
 	}
 
 	t_group("the ring keeps the newest, not the oldest");

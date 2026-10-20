@@ -246,6 +246,14 @@ uint8_t tm_door_lock_state(void);
 void tm_door_lock_set(uint8_t lock_state, uint8_t source);
 
 /**
+ * tm_door_lock_set() for a bolt moved by a credential: the event names the
+ * Door Lock user @p user_index that credential is filed under (SetUser's
+ * index, 1-based), so a controller can say who. 0 means not known, reported
+ * as null.
+ */
+void tm_door_lock_set_user(uint8_t lock_state, uint8_t source, uint16_t user_index);
+
+/**
  * Record a LockOperation event, to be carried by the next report. Lock held.
  *
  * Call after the state has changed, not before: the event says what happened.
