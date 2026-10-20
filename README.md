@@ -47,3 +47,6 @@ make seams   # the 48 symbols a port provides
 ```
 
 Apache-2.0. Third-party data: `NOTICE`.
+
+Unofficial. Not affiliated with, endorsed or certified by any company or
+standards body named here. Trademarks belong to their owners.
