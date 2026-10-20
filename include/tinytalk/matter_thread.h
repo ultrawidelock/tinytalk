@@ -124,19 +124,19 @@ int matter_thread_wait_attached(uint32_t timeout_ms);
  *  1. The commissionable record asks a lease of its own, 120 s, not the
  *     operational records' 2 h: a node that loses power with a window open
  *     otherwise leaves a _matterc record that Apple Home dials over Thread
- *     instead of using BLE (e2410b9, 2026-10-16). An open window renews it.
+ *     instead of using BLE (6cb7b80, 2026-10-16). An open window renews it.
  *  2. A record is removed by name. Removing the host, even with its key
  *     lease, does not remove its services: Apple's border router kept one
- *     for over 22 min (a029e57, 2026-10-16).
+ *     for over 22 min (edd63a5, 2026-10-16).
  *  3. The window record's name is persisted while it is registered, and a
  *     record a crash or reset left behind is registered again under that
- *     name and removed at the next boot (a029e57, 2026-10-16).
+ *     name and removed at the next boot (edd63a5, 2026-10-16).
  *  4. Every record is retracted before a factory-reset reboot:
  *     matter_thread_advertise_reset(), then wait while
- *     matter_thread_advertise_pending() (b1ed1a6, 2026-10-16).
+ *     matter_thread_advertise_pending() (92741a4, 2026-10-16).
  *
  * Refusing PASE over IP without an open window is the node's job
- * (363908a, src/matter_commission.c) and needs nothing from a port.
+ * (031babc, src/matter_commission.c) and needs nothing from a port.
  */
 
 /**
