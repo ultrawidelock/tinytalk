@@ -1970,8 +1970,12 @@ static void notify_one(struct sub_state *s, const uint32_t *changes)
 	 * matched. It reads like bookkeeping and is the only evidence that the
 	 * state a person can see on a hub came from the state the device is in.
 	 */
-	TM_LOG_INF("  report to subscription 0x%08x: %u attribute(s), %u B, rc=%d",
-		(unsigned int)s->id, (unsigned int)one.n_paths, (unsigned int)framed, rc);
+	TM_LOG_INF("  report to subscription 0x%08x: %u attribute(s) (first 0x%04x/0x%04x), "
+		   "events %s, %u B, rc=%d",
+		(unsigned int)s->id, (unsigned int)one.n_paths,
+		one.n_paths > 0u ? (unsigned int)one.paths[0].cluster : 0u,
+		one.n_paths > 0u ? (unsigned int)one.paths[0].attribute : 0u,
+		events ? "yes" : "no", (unsigned int)framed, rc);
 	/*
 	 * Advance the watermark only on a report that went out. Moving it before
 	 * the send would drop an unlock on a failed transmit, and the subscriber
@@ -2595,12 +2599,12 @@ static void on_subscribe_request(const struct matter_exchange_in *in)
 								   : 0u;
 
 		TM_LOG_INF("  subscribe: id 0x%08x, session 0x%04x, fabric %u, peer node "
-			   "0x%08x%08x, %u path(s), asked %u..%u s, granted %u s",
+			   "0x%08x%08x, %u path(s), %u event path(s), asked %u..%u s, granted %u s",
 			   (unsigned int)s->id, (unsigned int)s->session_id,
 			   cslot < MATTER_CASE_SESSIONS ? (unsigned int)s_case_fabric[cslot] : 0u,
 			   (unsigned int)(peer_node >> 32), (unsigned int)peer_node,
-			   s->read.n_paths, sub.min_interval_s, sub.max_interval_s,
-			   s->max_interval_s);
+			   s->read.n_paths, s->read.n_event_paths, sub.min_interval_s,
+			   sub.max_interval_s, s->max_interval_s);
 	}
 	/*
 	 * WHICH path, not just how many. A subscription to something this node
