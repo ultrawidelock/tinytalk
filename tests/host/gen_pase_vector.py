@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Aseem Chopra
+# SPDX-License-Identifier: Apache-2.0
+
 """Generate an independent PASE responder vector for tests/host/test_matter_pase_sm.c.
 
 Not run by make test. It produced the constants pasted into that suite,

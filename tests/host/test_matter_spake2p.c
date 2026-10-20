@@ -1,3 +1,6 @@
+/* SPDX-FileCopyrightText: 2026 Aseem Chopra */
+/* SPDX-License-Identifier: Apache-2.0 */
+
 /**
  * @file test_matter_spake2p.c — PBKDF2, w0/w1, the transcript and the confirmations.
  *

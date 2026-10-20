@@ -1,3 +1,6 @@
+/* SPDX-FileCopyrightText: 2026 Aseem Chopra */
+/* SPDX-License-Identifier: Apache-2.0 */
+
 /**
  * @file test_matter_exchange.c — the unsecured exchange PASE rides on.
  *

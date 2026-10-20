@@ -1,3 +1,6 @@
+/* SPDX-FileCopyrightText: 2026 Aseem Chopra */
+/* SPDX-License-Identifier: Apache-2.0 */
+
 /**
  * @file spakefake.h — arming the recorded SPAKE2+ exchange. See spakefake.c.
  */

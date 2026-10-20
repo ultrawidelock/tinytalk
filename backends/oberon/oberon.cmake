@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Aseem Chopra
+# SPDX-License-Identifier: Apache-2.0
+
 # SPAKE2+ on nrf_oberon, the binary library nRF Connect SDK ships in
 # nrfxlib/crypto. Nothing is vendored here: the four ocrypto_spake2p_p256_*
 # functions matter_spake2p.h declares come from liboberon.

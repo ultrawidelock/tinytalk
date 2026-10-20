@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Aseem Chopra
+# SPDX-License-Identifier: Apache-2.0
+
 """Derive a SPAKE2+ verifier (w0 and L) for a Matter setup passcode.
 
 A Matter device never stores its setup passcode. It stores the verifier, which

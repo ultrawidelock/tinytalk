@@ -1,3 +1,5 @@
+/* SPDX-FileCopyrightText: 2026 Aseem Chopra */
+/* SPDX-FileCopyrightText: Project CHIP Authors (test credentials, see NOTICE) */
 /* SPDX-License-Identifier: Apache-2.0 */
 
 /*

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Aseem Chopra
+# SPDX-License-Identifier: Apache-2.0
+
 # The Zephyr port: tm_platform.h on the kernel and storage on Zephyr settings
 # (tm_kv.h), always; the 0xFFF6 BLE commissioning transport (matter_ble.h) with
 # CONFIG_TINYTALK_BLE, and Thread on OpenThread (matter_thread.h) with

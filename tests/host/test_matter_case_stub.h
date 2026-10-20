@@ -1,3 +1,6 @@
+/* SPDX-FileCopyrightText: 2026 Aseem Chopra */
+/* SPDX-License-Identifier: Apache-2.0 */
+
 /** @file test_matter_case_stub.h — see test_matter_case_stub.c. */
 #ifndef TINYTALK_TEST_MATTER_CASE_STUB_H
 #define TINYTALK_TEST_MATTER_CASE_STUB_H

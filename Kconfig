@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Aseem Chopra
+# SPDX-License-Identifier: Apache-2.0
+
 # tinytalk: a hand-written minimal Matter node. Distinct from the Nordic/CHIP
 # Matter stack: it exists because CHIP does not fit a 512 KB / 128 KB part.
 

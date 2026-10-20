@@ -1,3 +1,4 @@
+/* SPDX-FileCopyrightText: 2026 Aseem Chopra */
 /* SPDX-License-Identifier: Apache-2.0 */
 
 // Streaming SHA-256 (FIPS 180-4) implementation used by the credential crypto layer.

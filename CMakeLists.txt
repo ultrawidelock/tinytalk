@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Aseem Chopra
+# SPDX-License-Identifier: Apache-2.0
+
 # Hand-written minimal Matter node as a Zephyr module.
 # Contributes nothing unless CONFIG_TINYTALK=y.
 #

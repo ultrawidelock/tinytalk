@@ -1,3 +1,4 @@
+/* SPDX-FileCopyrightText: 2026 Aseem Chopra */
 /* SPDX-License-Identifier: Apache-2.0 */
 
 /* Durable Matter identity storage: fabrics, ACLs and the network, over tm_kv. */

@@ -1,3 +1,6 @@
+/* SPDX-FileCopyrightText: 2026 Aseem Chopra */
+/* SPDX-License-Identifier: Apache-2.0 */
+
 /*
  * What the fake signer in test_matter_attest_stub.c recorded. See that file for
  * why it is a fake.

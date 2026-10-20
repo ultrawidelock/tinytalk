@@ -1,3 +1,6 @@
+/* SPDX-FileCopyrightText: 2026 Aseem Chopra */
+/* SPDX-License-Identifier: Apache-2.0 */
+
 /**
  * @file test_spake2p_mbedtls.c — the Mbed TLS SPAKE2+ backend against outside answers.
  *
