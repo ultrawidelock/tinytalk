@@ -1,5 +1,3 @@
-<!-- DISCLAIMER: maintainer adds this -->
-
 # tinytalk
 
 A from-scratch Matter accessory node in portable C11, small enough for an
