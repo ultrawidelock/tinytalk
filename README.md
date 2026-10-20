@@ -16,7 +16,7 @@ three fabrics.
 **Does not** certification, Wi-Fi, OTA, groups, door lock users or
 credentials, controller role.
 
-53,836 B flash, 21,432 B RAM, LTO release build. connectedhomeip does not
+52.6 KB flash, 20.9 KB RAM, LTO release build. connectedhomeip does not
 fit the part.
 
 ## Use
