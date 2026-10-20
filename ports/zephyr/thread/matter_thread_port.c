@@ -1445,4 +1445,3 @@ int matter_thread_unadvertise_commissionable(void)
 	(void)settings_delete(SRP_COMM_KEY);
 	return MATTER_OK;
 }
-

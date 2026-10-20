@@ -6,8 +6,8 @@
  *
  * The signature itself cannot be checked here: the C suite has no P-256, so
  * anything this file asserted about it would only prove it agrees with itself.
- * tests/host/test_matter_attest.py verifies the real signature and the CSR
- * against OpenSSL.
+ * The commissioner verifies the real signature and parses the CSR, which
+ * Apple Home does at every add.
  *
  * What IS checkable here is everything around it, and it is the part that has
  * gone wrong before: which bytes are presented for signature, whether the

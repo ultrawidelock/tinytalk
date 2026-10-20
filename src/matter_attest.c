@@ -307,8 +307,8 @@ static size_t der_len(const struct der *d)
 
 /*
  * OIDs, DER-encoded including their 0x06 tag and length. Standard and stable;
- * the definitive check that they are right is that OpenSSL parses the CSR this
- * builds, which tests/host/test_matter_attest.py does.
+ * the definitive check that they are right is that the commissioner parses the
+ * CSR this builds, which Apple Home does at every add.
  */
 static const uint8_t k_oid_ou[] = {0x06, 0x03, 0x55, 0x04, 0x0B}; /* 2.5.4.11 */
 static const uint8_t k_oid_ec_pubkey[] = {0x06, 0x07, 0x2A, 0x86, 0x48,

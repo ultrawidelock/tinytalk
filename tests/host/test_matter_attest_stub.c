@@ -9,8 +9,7 @@
  * tests can check is the plumbing: that the right bytes are presented for
  * signature, in the right order, with the challenge appended.
  *
- * The signature itself is verified against OpenSSL in
- * tests/host/test_matter_attest.py, which is the only place it can be.
+ * The signature itself is verified by the commissioner, at every add.
  */
 #include <string.h>
 

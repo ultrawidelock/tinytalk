@@ -92,7 +92,7 @@ config TINYTALK_EVENTS
 	  unknown field, and no report carries an EventReports array.
 
 	  Saves 2,016 B of flash and 1,088 B of RAM
-	  (decawave_dwm3001cdk, samples/door-lock, LTO on, measured
+	  (decawave_dwm3001cdk, the door-lock sample, LTO on, measured
 	  2026-10-16).
 
 	  Risk: Apple Home subscribes to Door Lock events, and the Door Lock
@@ -112,7 +112,7 @@ config TINYTALK_ADMIN_COMMANDS
 	  matter_commission_open_window() (a local gesture) opens a window.
 
 	  Saves 528 B of flash and no RAM
-	  (decawave_dwm3001cdk, samples/door-lock, LTO on, measured
+	  (decawave_dwm3001cdk, the door-lock sample, LTO on, measured
 	  2026-10-16).
 
 	  Risk: OpenCommissioningWindow is mandatory in the cluster, which is
@@ -131,7 +131,7 @@ config TINYTALK_SUB_RESUME
 	  subscription and nothing is stored.
 
 	  Saves 996 B of flash and 128 B of RAM
-	  (decawave_dwm3001cdk, samples/door-lock, LTO on, measured
+	  (decawave_dwm3001cdk, the door-lock sample, LTO on, measured
 	  2026-10-16).
 
 	  Risk: a controller does not re-subscribe until its own liveness
@@ -252,7 +252,7 @@ config TINYTALK_SETUP_PASSCODE
 	  reads it, so the passcode stays out of a module-only image exactly as
 	  the augmented SPAKE2+ form intends.
 
-	  samples/door-lock runs scripts/spake2p_verifier.py --from-config at
+	  tinylock's door-lock runs scripts/spake2p_verifier.py --from-config at
 	  build time: it re-derives the verifier from this passcode, refuses to
 	  continue if the two disagree, and compiles the 11-digit manual code
 	  into the sample's boot log.
